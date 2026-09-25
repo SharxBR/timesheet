@@ -487,6 +487,13 @@
             Auto-sync whenever I save changes
           </label>
         </div>
+        <div class="row" style="background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;">
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-weight:400;">
+            <input type="checkbox" id="rememberPassChk" style="width:16px;height:16px;margin-top:2px;" />
+            <span>Remember passphrase on this device <span style="color:#92400e;">(skip re-entering it every time)</span><br>
+            <span style="font-size:12px;color:#a16207;">Best for your own phone or personal computer. Leave off on a shared/work machine &mdash; then anyone using this unlocked device could open your data.</span></span>
+          </label>
+        </div>
         <div class="row">
           <button class="primary" id="connectBtn">Connect &amp; sync</button>
         </div>
@@ -501,6 +508,12 @@
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
             <input type="checkbox" id="autoSyncChk2" style="width:16px;height:16px;" />
             Auto-sync whenever I save changes
+          </label>
+        </div>
+        <div class="row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+            <input type="checkbox" id="rememberPassChk2" style="width:16px;height:16px;" />
+            Remember passphrase on this device (auto-unlock)
           </label>
         </div>
         <div class="row">
@@ -541,6 +554,7 @@
   const SYNC_TOKEN_KEY = 'ht_sync_token';
   const SYNC_GIST_KEY = 'ht_sync_gist';
   const SYNC_AUTO_KEY = 'ht_sync_auto';
+  const SYNC_REMEMBER_KEY = 'ht_sync_remember_pass'; // stored passphrase (opt-in, this device only)
   const SYNC_LASTPULL_KEY = 'ht_sync_last';   // ISO time of the data we last have
   const DATA_STAMP_KEY = 'ht_data_stamp';     // ISO time our local data was last changed
 
@@ -1488,6 +1502,17 @@
 
   let sessionPass = null; // held only in memory for this tab
 
+  // "Remember passphrase" — opt-in, stored in THIS browser only. When on, the app
+  // auto-unlocks on load without asking for the passphrase again.
+  function rememberOn() { return localStorage.getItem(SYNC_REMEMBER_KEY) !== null; }
+  function saveRememberedPass(p) { localStorage.setItem(SYNC_REMEMBER_KEY, p); }
+  function clearRememberedPass() { localStorage.removeItem(SYNC_REMEMBER_KEY); }
+  function loadRememberedPass() {
+    const p = localStorage.getItem(SYNC_REMEMBER_KEY);
+    if (p) sessionPass = p;
+    return !!p;
+  }
+
   function b64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
   function unb64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); }
 
@@ -1650,6 +1675,8 @@
   const passSet2El = document.getElementById('passSet2');
   const autoSyncChk = document.getElementById('autoSyncChk');
   const autoSyncChk2 = document.getElementById('autoSyncChk2');
+  const rememberPassChk = document.getElementById('rememberPassChk');
+  const rememberPassChk2 = document.getElementById('rememberPassChk2');
 
   function renderSyncUI() {
     const configured = syncConfigured();
@@ -1659,6 +1686,7 @@
     document.getElementById('syncNowBtn').style.display = configured ? 'inline-block' : 'none';
     document.getElementById('pullBtn').style.display = configured ? 'inline-block' : 'none';
     autoSyncChk2.checked = autoSyncOn();
+    rememberPassChk2.checked = rememberOn();
 
     if (!configured) {
       setSyncState('off', 'Cloud sync is not set up yet. Fill in the form below to connect this device.');
@@ -1682,6 +1710,7 @@
     localStorage.setItem(SYNC_GIST_KEY, gist);
     localStorage.setItem(SYNC_AUTO_KEY, autoSyncChk.checked ? 'true' : 'false');
     sessionPass = p1;
+    if (rememberPassChk && rememberPassChk.checked) saveRememberedPass(p1); else clearRememberedPass();
 
     // First connect: does the cloud already have data (another device set it up)?
     setSyncState('syncing', 'Connecting&hellip;');
@@ -1729,6 +1758,7 @@
     if (!confirm('Disconnect this device? Your token and passphrase are removed from THIS browser only. Local data stays, and the cloud copy is untouched.')) return;
     localStorage.removeItem(SYNC_TOKEN_KEY);
     localStorage.removeItem(SYNC_GIST_KEY);
+    clearRememberedPass();
     sessionPass = null;
     renderSyncUI();
     toast('Disconnected this device.');
@@ -1741,12 +1771,29 @@
     const np2 = prompt('Type the new passphrase again to confirm:');
     if (np !== np2) { alert('They did not match. Passphrase unchanged.'); return; }
     sessionPass = np;
+    if (rememberOn()) saveRememberedPass(np);
     await pushToCloud({});
     toast('Passphrase changed and re-encrypted in the cloud. Update your other devices.');
   });
 
   autoSyncChk2.addEventListener('change', () => {
     localStorage.setItem(SYNC_AUTO_KEY, autoSyncChk2.checked ? 'true' : 'false');
+  });
+
+  rememberPassChk2.addEventListener('change', () => {
+    if (rememberPassChk2.checked) {
+      if (!sessionPass) {
+        // Need the passphrase in memory before we can remember it.
+        rememberPassChk2.checked = false;
+        promptUnlock(() => { saveRememberedPass(sessionPass); rememberPassChk2.checked = true; toast('This device will now auto-unlock.'); });
+        return;
+      }
+      saveRememberedPass(sessionPass);
+      toast('This device will now auto-unlock.');
+    } else {
+      clearRememberedPass();
+      toast('Passphrase will be asked for each time again.');
+    }
   });
 
   // ---- Passphrase unlock overlay ----
@@ -1782,7 +1829,14 @@
   // On load: if configured, offer to pull the latest automatically.
   async function autoPullOnLoad() {
     if (!syncConfigured()) return;
-    // Ask for the passphrase, then pull silently and reload only if newer.
+    if (loadRememberedPass()) {
+      // Passphrase is remembered on this device — unlock silently and pull the latest.
+      renderSyncUI();
+      await pullFromCloud({ silent: true });
+      renderSyncUI();
+      return;
+    }
+    // Otherwise stay locked until the user enters the passphrase.
     setSyncState('off', 'Connected. Unlock to sync.');
   }
 
