@@ -185,14 +185,46 @@
     <h1>Hours &amp; Money Tracker</h1>
 
     <div class="tabs">
-      <div class="tab active" data-page="timesheetPage">Timesheet</div>
+      <div class="tab active" data-page="dashboardPage">Dashboard</div>
+      <div class="tab" data-page="timesheetPage">Timesheet</div>
       <div class="tab" data-page="budgetPage">Budget</div>
       <div class="tab" data-page="flowPage">Money Flow</div>
       <div class="tab" data-page="syncPage">Sync &amp; Devices</div>
     </div>
 
+    <!-- ============ DASHBOARD PAGE ============ -->
+    <div class="page active" id="dashboardPage">
+      <p class="subtitle">Your month at a glance. Everything here updates automatically as you log hours and expenses.</p>
+
+      <div class="row">
+        <label for="dashMonth">Month:</label>
+        <input type="month" id="dashMonth" />
+      </div>
+
+      <div class="cards">
+        <div class="card left"><div class="num" id="dHours">0</div><div class="lbl">Hours worked</div></div>
+        <div class="card income"><div class="num" id="dEarnings">$0.00</div><div class="lbl" id="dEarningsLbl">Earnings</div></div>
+      </div>
+      <div class="cards" style="margin-top:12px;">
+        <div class="card expense"><div class="num" id="dExpenses">$0.00</div><div class="lbl">Expenses</div></div>
+        <div class="card left"><div class="num" id="dLeft">$0.00</div><div class="lbl">Left over</div></div>
+      </div>
+
+      <h2>Recent days</h2>
+      <table id="dashRecentTable">
+        <thead><tr><th>Date</th><th>Shift</th><th>Hours</th><th>Earnings</th></tr></thead>
+        <tbody id="dashRecentBody"></tbody>
+      </table>
+      <div class="empty" id="dashRecentEmpty">No days logged this month yet. Head to the Timesheet tab to add one.</div>
+
+      <div class="row" style="margin-top:20px;">
+        <button class="primary" id="dashGoLog">Log a work day</button>
+        <button class="ghost" id="dashGoBudget">Open budget</button>
+      </div>
+    </div>
+
     <!-- ============ TIMESHEET PAGE ============ -->
-    <div class="page active" id="timesheetPage">
+    <div class="page" id="timesheetPage">
       <p class="subtitle">Log your work day, deduct breaks, save it, and see a monthly summary.</p>
 
       <div class="row">
@@ -207,14 +239,27 @@
       </div>
 
       <div class="hint">
-        <strong>How to log time:</strong> Click your <em>start</em> time, then click your <em>end</em> time &mdash;
-        everything in between fills in automatically. Click a new start time to redo the range.
+        <strong>How to log time:</strong> Type your start and end times below, <em>or</em> click your <em>start</em> time then your <em>end</em> time on the grid &mdash; either way works.
+      </div>
+
+      <div class="row" style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:12px 14px;">
+        <label for="startTime">From:</label>
+        <input type="time" id="startTime" />
+        <label for="endTime">To:</label>
+        <input type="time" id="endTime" />
+        <button class="primary" id="applyTimesBtn">Use these times</button>
+        <span style="color:#3730a3;font-size:13px;">Type exact times (e.g. 9:15 AM &ndash; 4:45 PM). No 30-minute grid limit.</span>
       </div>
 
       <div class="blocks" id="blocks"></div>
 
       <div class="break-row">
-        <span style="color:#9a3412;font-size:13px;">A 30-minute break is deducted automatically when your shift is 6 hours or more.</span>
+        <label for="breakLen" style="color:#9a3412;font-weight:600;margin-right:8px;">Break to deduct on shifts of 6+ hours:</label>
+        <select id="breakLen">
+          <option value="30">30 minutes (default)</option>
+          <option value="60">1 hour</option>
+        </select>
+        <span style="color:#9a3412;font-size:13px;margin-left:8px;">Applied automatically when your shift is 6 hours or more.</span>
       </div>
 
       <div class="totals">
@@ -486,10 +531,11 @@
   const EXPENSES_KEY = 'ht_expenses';
   const CATEGORIES_KEY = 'ht_categories';
   const LEARNED_KEY = 'ht_learned_rules';
+  const BREAK_LEN_KEY = 'ht_break_len';
   const DEFAULT_CATEGORIES = ['Rent', 'Food', 'Transport', 'Utilities', 'Fun', 'Other'];
 
   // Keys that make up "all the user's data" — synced & backed up together.
-  const ALL_KEYS = [RATE_KEY, HISTORY_KEY, TAX_ON_KEY, TAX_RATE_KEY, EXPENSES_KEY, CATEGORIES_KEY, LEARNED_KEY];
+  const ALL_KEYS = [RATE_KEY, HISTORY_KEY, TAX_ON_KEY, TAX_RATE_KEY, EXPENSES_KEY, CATEGORIES_KEY, LEARNED_KEY, BREAK_LEN_KEY];
 
   // Sync config keys (NOT synced — they are per-device secrets/settings).
   const SYNC_TOKEN_KEY = 'ht_sync_token';
@@ -548,6 +594,7 @@
       tab.classList.add('active');
       document.getElementById(tab.dataset.page).classList.add('active');
       const app = document.querySelector('.app');
+      if (tab.dataset.page === 'dashboardPage') renderDashboard();
       if (tab.dataset.page === 'budgetPage') renderBudget();
       if (tab.dataset.page === 'syncPage') renderSyncUI();
       if (tab.dataset.page === 'flowPage') {
@@ -573,6 +620,19 @@
   const historyEmpty = document.getElementById('historyEmpty');
   const summaryMonthEl = document.getElementById('summaryMonth');
   const summaryBox = document.getElementById('summaryBox');
+  const startTimeEl = document.getElementById('startTime');
+  const endTimeEl = document.getElementById('endTime');
+  const breakLenEl = document.getElementById('breakLen');
+
+  // Break length (minutes) deducted on shifts >= 6h. Default 30.
+  const savedBreakLen = localStorage.getItem(BREAK_LEN_KEY);
+  if (savedBreakLen === '60') breakLenEl.value = '60'; else breakLenEl.value = '30';
+  breakLenEl.addEventListener('change', () => {
+    localStorage.setItem(BREAK_LEN_KEY, breakLenEl.value);
+    touchData();
+    updateDayTotals();
+  });
+  function breakMinutes() { return breakLenEl.value === '60' ? 60 : 30; }
 
   const ticks = [];
   for (let h = startHour; h <= endHour; h++) {
@@ -588,6 +648,9 @@
   }
 
   let firstClick = null, range = null;
+  // When the user types exact times, we store the shift here (decimal hours + label).
+  // This bypasses the 30-minute grid entirely. Grid clicks clear it.
+  let manualShift = null;
 
   const savedRate = localStorage.getItem(RATE_KEY);
   if (savedRate !== null) rateEl.value = savedRate;
@@ -618,16 +681,27 @@
     });
   }
   function onBlockClick(i) {
+    manualShift = null;
+    startTimeEl.value = ''; endTimeEl.value = '';
     if (firstClick === null) { firstClick = i; range = null; }
     else { range = { start: Math.min(firstClick, i), end: Math.max(firstClick, i) }; firstClick = null; }
     renderBlocks(); updateDayTotals();
   }
 
-  function breakHours() { return shiftHours() >= 6 ? 0.5 : 0; }
-  function shiftHours() { return range ? (range.end - range.start) * 0.5 : 0; }
-  function workedHours() { return Math.max(0, shiftHours() - breakHours()); }
-  function shiftLabel() { return range ? fmt(ticks[range.start]) + ' \u2013 ' + fmt(ticks[range.end]) : ''; }
-  function breakLabel() { return breakHours() > 0 ? '30 min' : '\u2014'; }
+  function breakHours() { return shiftHours() >= 6 ? breakMinutes() / 60 : 0; }
+  function shiftHours() {
+    if (manualShift) return manualShift.hours;
+    return range ? (range.end - range.start) * 0.5 : 0;
+  }
+  function workedHours() {
+    // round to 2 decimals to avoid float noise like 6.749999
+    return Math.max(0, Math.round((shiftHours() - breakHours()) * 100) / 100);
+  }
+  function shiftLabel() {
+    if (manualShift) return manualShift.label;
+    return range ? fmt(ticks[range.start]) + ' \u2013 ' + fmt(ticks[range.end]) : '';
+  }
+  function breakLabel() { return breakHours() > 0 ? (breakMinutes() === 60 ? '1 hour' : '30 min') : '\u2014'; }
 
   function taxOn() { return taxToggleEl.checked; }
   function taxRate() { return Math.min(100, Math.max(0, parseFloat(taxRateEl.value) || 0)); }
@@ -673,12 +747,39 @@
     const entry = { date, label: shiftLabel(), breakLabel: breakLabel(), hours, earnings: hours * rate };
     const hist = getHistory().filter(e => e.date !== date);
     hist.push(entry); setHistory(hist); renderHistory();
-    firstClick = null; range = null; renderBlocks(); updateDayTotals();
+    firstClick = null; range = null; manualShift = null;
+    startTimeEl.value = ''; endTimeEl.value = '';
+    renderBlocks(); updateDayTotals();
     alert('Saved ' + entry.hours + ' hours for ' + prettyDate(date) + '.');
   });
 
   document.getElementById('resetBtn').addEventListener('click', () => {
-    firstClick = null; range = null; renderBlocks(); updateDayTotals();
+    firstClick = null; range = null; manualShift = null;
+    startTimeEl.value = ''; endTimeEl.value = '';
+    renderBlocks(); updateDayTotals();
+  });
+
+  // Format a "HH:MM" 24h string into a 12h label like "9:15 AM".
+  function fmtTimeStr(hhmm) {
+    const [h, m] = hhmm.split(':').map(Number);
+    const suffix = h >= 12 ? 'PM' : 'AM';
+    let hh = h % 12; if (hh === 0) hh = 12;
+    return hh + ':' + String(m).padStart(2, '0') + ' ' + suffix;
+  }
+
+  document.getElementById('applyTimesBtn').addEventListener('click', () => {
+    const s = startTimeEl.value, e = endTimeEl.value;
+    if (!s || !e) { alert('Enter both a start time and an end time.'); return; }
+    const [sh, sm] = s.split(':').map(Number);
+    const [eh, em] = e.split(':').map(Number);
+    let mins = (eh * 60 + em) - (sh * 60 + sm);
+    if (mins <= 0) { alert('The end time must be after the start time (same day).'); return; }
+    const hours = Math.round((mins / 60) * 100) / 100;
+    manualShift = { hours, label: fmtTimeStr(s) + ' \u2013 ' + fmtTimeStr(e) };
+    // Clear the grid so the two methods don't visually conflict.
+    firstClick = null; range = null;
+    renderBlocks();
+    updateDayTotals();
   });
 
   rateEl.addEventListener('input', updateDayTotals);
@@ -723,6 +824,59 @@
     summaryBox.style.display = 'block';
   }
   document.getElementById('summaryBtn').addEventListener('click', showSummary);
+
+  // ================= DASHBOARD =================
+  const dashMonthEl = document.getElementById('dashMonth');
+  const dHours = document.getElementById('dHours');
+  const dEarnings = document.getElementById('dEarnings');
+  const dEarningsLbl = document.getElementById('dEarningsLbl');
+  const dExpenses = document.getElementById('dExpenses');
+  const dLeft = document.getElementById('dLeft');
+  const dashRecentBody = document.getElementById('dashRecentBody');
+  const dashRecentEmpty = document.getElementById('dashRecentEmpty');
+
+  function renderDashboard() {
+    const month = dashMonthEl.value || thisMonth;
+    const days = getHistory().filter(e => e.date.startsWith(month));
+    const totalHours = days.reduce((s, e) => s + e.hours, 0);
+    const gross = days.reduce((s, e) => s + e.earnings, 0);
+    const taxed = taxOn();
+    const income = taxed ? gross * (1 - taxRate() / 100) : gross;
+    const totalExp = getExpenses().filter(e => e.date.startsWith(month)).reduce((s, e) => s + e.amount, 0);
+    const left = income - totalExp;
+
+    dHours.textContent = Math.round(totalHours * 100) / 100;
+    dEarnings.textContent = '$' + income.toFixed(2);
+    dEarningsLbl.textContent = taxed ? 'Take-home earnings' : 'Gross earnings';
+    dExpenses.textContent = '$' + totalExp.toFixed(2);
+    dLeft.textContent = (left < 0 ? '-$' : '$') + Math.abs(left).toFixed(2);
+
+    const recent = days.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 5);
+    dashRecentBody.innerHTML = '';
+    if (recent.length === 0) {
+      dashRecentEmpty.style.display = 'block';
+    } else {
+      dashRecentEmpty.style.display = 'none';
+      recent.forEach(e => {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + prettyDate(e.date) + '</td>' +
+          '<td>' + e.label + '</td>' +
+          '<td>' + e.hours + '</td>' +
+          '<td>$' + e.earnings.toFixed(2) + '</td>';
+        dashRecentBody.appendChild(tr);
+      });
+    }
+  }
+
+  dashMonthEl.addEventListener('change', renderDashboard);
+
+  function switchToTab(pageId) {
+    const tab = document.querySelector('.tab[data-page="' + pageId + '"]');
+    if (tab) tab.click();
+  }
+  document.getElementById('dashGoLog').addEventListener('click', () => switchToTab('timesheetPage'));
+  document.getElementById('dashGoBudget').addEventListener('click', () => switchToTab('budgetPage'));
 
   // ================= BUDGET =================
   const budgetMonthEl = document.getElementById('budgetMonth');
@@ -1479,10 +1633,12 @@
     taxToggleEl.checked = localStorage.getItem(TAX_ON_KEY) === 'true';
     budgetTaxToggle.checked = taxToggleEl.checked;
     const tr = localStorage.getItem(TAX_RATE_KEY); if (tr !== null) { taxRateEl.value = tr; budgetTaxRate.value = tr; }
+    const bl = localStorage.getItem(BREAK_LEN_KEY); breakLenEl.value = (bl === '60') ? '60' : '30';
     renderCategories();
     updateDayTotals();
     renderHistory();
     renderBudget();
+    if (document.getElementById('dashboardPage').classList.contains('active')) renderDashboard();
     if (summaryBox.style.display === 'block') showSummary();
     if (document.getElementById('flowPage').classList.contains('active')) renderFlow();
   }
@@ -1632,10 +1788,12 @@
 
   // ================= INIT =================
   flowMonthEl.value = thisMonth;
+  dashMonthEl.value = thisMonth;
   renderCategories();
   renderBlocks();
   updateDayTotals();
   renderHistory();
+  renderDashboard();
   renderSyncUI();
   autoPullOnLoad();
 </script>
