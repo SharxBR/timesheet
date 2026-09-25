@@ -199,6 +199,11 @@
       <div class="row">
         <label for="dashMonth">Month:</label>
         <input type="month" id="dashMonth" />
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;margin-left:8px;">
+          <input type="checkbox" id="dashYtd" style="width:18px;height:18px;cursor:pointer;" />
+          Year to date
+        </label>
+        <span id="dashPeriodLbl" style="color:#6b7280;font-size:13px;"></span>
       </div>
 
       <div class="cards">
@@ -908,7 +913,8 @@
   const dashRecentEmpty = document.getElementById('dashRecentEmpty');
 
   function renderDashboard() {
-    const month = dashMonthEl.value || thisMonth;
+    const month = dashPeriod();
+    if (dashPeriodLblEl) dashPeriodLblEl.textContent = 'Showing: ' + periodLabel(month);
     const days = getHistory().filter(e => e.date.startsWith(month));
     const totalHours = days.reduce((s, e) => s + e.hours, 0);
     const gross = days.reduce((s, e) => s + e.earnings, 0);
@@ -944,6 +950,12 @@
   }
 
   dashMonthEl.addEventListener('change', renderDashboard);
+  document.getElementById('dashYtd').addEventListener('change', () => {
+    const on = document.getElementById('dashYtd').checked;
+    dashMonthEl.disabled = on;
+    dashMonthEl.style.opacity = on ? '0.5' : '1';
+    renderDashboard();
+  });
 
   function switchToTab(pageId) {
     const tab = document.querySelector('.tab[data-page="' + pageId + '"]');
@@ -1012,6 +1024,8 @@
   const budgetYtdEl = document.getElementById('budgetYtd');
   const flowYtdEl = document.getElementById('flowYtd');
   const budgetPeriodLblEl = document.getElementById('budgetPeriodLbl');
+  const dashYtdEl = document.getElementById('dashYtd');
+  const dashPeriodLblEl = document.getElementById('dashPeriodLbl');
 
   function yearOf(month) { return (month || thisMonth).slice(0, 4); }
   function budgetPeriod() {
@@ -1020,6 +1034,10 @@
   function flowPeriod() {
     const m = flowMonthEl.value || currentBudgetMonth();
     return (flowYtdEl && flowYtdEl.checked) ? yearOf(m) : m;
+  }
+  function dashPeriod() {
+    const m = dashMonthEl.value || thisMonth;
+    return (dashYtdEl && dashYtdEl.checked) ? yearOf(m) : m;
   }
   function periodLabel(period) {
     // "2026" -> "2026 (year to date)"; "2026-09" -> "September 2026"
