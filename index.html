@@ -342,6 +342,34 @@
         <div id="catChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-left:6px;"></div>
       </div>
 
+      <h2>Other income</h2>
+      <p class="subtitle">Work hours already count as <strong>Work income</strong>. Add other money you earn here &mdash; detailing, car flips, anything. Enter the amount you actually keep (these are not taxed by the app).</p>
+
+      <div class="row" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;">
+        <label for="incCat" style="color:#065f46;">Income type:</label>
+        <select id="incCat"></select>
+        <label for="incAmt" style="color:#065f46;">$</label>
+        <input type="number" id="incAmt" min="0" step="0.01" placeholder="0.00" />
+        <input type="date" id="incDate" />
+        <input type="text" id="incNote" placeholder="note (optional, e.g. 2015 Civic)" />
+        <button class="green" id="addIncBtn">Add income</button>
+      </div>
+
+      <div class="row" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 14px;">
+        <label for="newIncCatName" style="color:#166534;">Add an income type:</label>
+        <input type="text" id="newIncCatName" placeholder="e.g. Detailing Income, Car Flip Income" />
+        <button class="ghost" id="addIncCatBtn">Add income type</button>
+        <div id="incCatChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-left:6px;"></div>
+      </div>
+
+      <table id="incTable">
+        <thead><tr><th>Date</th><th>Income type</th><th>Note</th><th>Amount</th><th></th></tr></thead>
+        <tbody id="incBody"></tbody>
+      </table>
+      <div class="empty" id="incEmpty">No other income added for this month yet.</div>
+
+      <h2>Bank import &amp; more</h2>
+
       <div class="row" style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;padding:12px 14px;">
         <div style="flex:1;min-width:220px;">
           <div style="font-weight:600;color:#155e75;">Import a bank statement</div>
@@ -373,6 +401,7 @@
         <div class="card expense"><div class="num" id="cExpense">$0.00</div><div class="lbl">Expenses</div></div>
         <div class="card left"><div class="num" id="cLeft">$0.00</div><div class="lbl">Left over</div></div>
       </div>
+      <div id="incomeBreakdown" style="display:none;font-size:13px;color:#065f46;margin:8px 2px 0;"></div>
 
       <h2>Where your money went</h2>
       <div class="catbar-wrap" id="catBars"></div>
@@ -545,10 +574,13 @@
   const CATEGORIES_KEY = 'ht_categories';
   const LEARNED_KEY = 'ht_learned_rules';
   const BREAK_LEN_KEY = 'ht_break_len';
+  const INCOME_KEY = 'ht_income';                 // manual income entries
+  const INCOME_CATS_KEY = 'ht_income_categories'; // manual income categories
   const DEFAULT_CATEGORIES = ['Rent', 'Food', 'Transport', 'Utilities', 'Fun', 'Other'];
+  const DEFAULT_INCOME_CATEGORIES = ['Detailing Income', 'Car Flip Income'];
 
   // Keys that make up "all the user's data" — synced & backed up together.
-  const ALL_KEYS = [RATE_KEY, HISTORY_KEY, TAX_ON_KEY, TAX_RATE_KEY, EXPENSES_KEY, CATEGORIES_KEY, LEARNED_KEY, BREAK_LEN_KEY];
+  const ALL_KEYS = [RATE_KEY, HISTORY_KEY, TAX_ON_KEY, TAX_RATE_KEY, EXPENSES_KEY, CATEGORIES_KEY, LEARNED_KEY, BREAK_LEN_KEY, INCOME_KEY, INCOME_CATS_KEY];
 
   // Sync config keys (NOT synced — they are per-device secrets/settings).
   const SYNC_TOKEN_KEY = 'ht_sync_token';
@@ -576,6 +608,23 @@
     catch (e) { return []; }
   }
   function setExpenses(arr) { localStorage.setItem(EXPENSES_KEY, JSON.stringify(arr)); touchData(); }
+
+  function getIncome() {
+    try { return JSON.parse(localStorage.getItem(INCOME_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+  function setIncome(arr) { localStorage.setItem(INCOME_KEY, JSON.stringify(arr)); touchData(); }
+  function getIncomeCategories() {
+    try {
+      const c = JSON.parse(localStorage.getItem(INCOME_CATS_KEY) || 'null');
+      return Array.isArray(c) && c.length ? c : DEFAULT_INCOME_CATEGORIES.slice();
+    } catch (e) { return DEFAULT_INCOME_CATEGORIES.slice(); }
+  }
+  function setIncomeCategories(arr) { localStorage.setItem(INCOME_CATS_KEY, JSON.stringify(arr)); touchData(); }
+  // Manual income total for a month (not taxed — you enter net profit yourself).
+  function monthManualIncome(month) {
+    return getIncome().filter(e => e.date.startsWith(month)).reduce((s, e) => s + e.amount, 0);
+  }
 
   function prettyDate(iso) {
     const d = new Date(iso + 'T00:00:00');
@@ -855,13 +904,15 @@
     const totalHours = days.reduce((s, e) => s + e.hours, 0);
     const gross = days.reduce((s, e) => s + e.earnings, 0);
     const taxed = taxOn();
-    const income = taxed ? gross * (1 - taxRate() / 100) : gross;
+    const workIncome = taxed ? gross * (1 - taxRate() / 100) : gross;
+    const otherIncome = monthManualIncome(month);
+    const income = workIncome + otherIncome;
     const totalExp = getExpenses().filter(e => e.date.startsWith(month)).reduce((s, e) => s + e.amount, 0);
     const left = income - totalExp;
 
     dHours.textContent = Math.round(totalHours * 100) / 100;
     dEarnings.textContent = '$' + income.toFixed(2);
-    dEarningsLbl.textContent = taxed ? 'Take-home earnings' : 'Gross earnings';
+    dEarningsLbl.textContent = otherIncome > 0 ? 'Total income (work + other)' : (taxed ? 'Take-home earnings' : 'Gross earnings');
     dExpenses.textContent = '$' + totalExp.toFixed(2);
     dLeft.textContent = (left < 0 ? '-$' : '$') + Math.abs(left).toFixed(2);
 
@@ -1001,15 +1052,34 @@
     const month = currentBudgetMonth();
     const gross = monthGross(month);
     const taxPct = budgetTaxOn() ? budgetTaxRateVal() : 0;
-    const income = gross * (1 - taxPct / 100);
+    const workIncome = gross * (1 - taxPct / 100);
+    const otherIncome = monthManualIncome(month);
+    const income = workIncome + otherIncome;
     const exp = getExpenses().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? 1 : -1);
     const totalExp = exp.reduce((s, e) => s + e.amount, 0);
 
     cIncome.textContent = '$' + income.toFixed(2);
-    cIncomeLbl.textContent = budgetTaxOn() ? 'Take-home income' : 'Income (from work)';
+    cIncomeLbl.textContent = otherIncome > 0
+      ? 'Total income (work + other)'
+      : (budgetTaxOn() ? 'Take-home work income' : 'Work income');
     cExpense.textContent = '$' + totalExp.toFixed(2);
     const left = income - totalExp;
     cLeft.textContent = (left < 0 ? '-$' : '$') + Math.abs(left).toFixed(2);
+
+    // Income breakdown line under the cards.
+    if (incomeBreakdownEl) {
+      if (otherIncome > 0) {
+        const parts = [];
+        parts.push('<span style="color:#059669;">Work: $' + workIncome.toFixed(2) + '</span>');
+        const byInc = {};
+        getIncome().filter(e => e.date.startsWith(month)).forEach(e => { byInc[e.category] = (byInc[e.category] || 0) + e.amount; });
+        Object.keys(byInc).forEach(c => parts.push('<span style="color:#047857;">' + c + ': $' + byInc[c].toFixed(2) + '</span>'));
+        incomeBreakdownEl.innerHTML = 'Income breakdown &mdash; ' + parts.join(' &nbsp;&bull;&nbsp; ');
+        incomeBreakdownEl.style.display = 'block';
+      } else {
+        incomeBreakdownEl.style.display = 'none';
+      }
+    }
 
     const byCat = {};
     exp.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
@@ -1052,7 +1122,105 @@
         });
       });
     }
+    renderIncome();
   }
+
+  // ---- Manual income refs & rendering ----
+  const incCatEl = document.getElementById('incCat');
+  const incAmtEl = document.getElementById('incAmt');
+  const incDateEl = document.getElementById('incDate');
+  const incNoteEl = document.getElementById('incNote');
+  const newIncCatNameEl = document.getElementById('newIncCatName');
+  const incCatChipsEl = document.getElementById('incCatChips');
+  const incBody = document.getElementById('incBody');
+  const incEmpty = document.getElementById('incEmpty');
+  const incomeBreakdownEl = document.getElementById('incomeBreakdown');
+
+  incDateEl.value = todayISO;
+
+  function renderIncomeCategories() {
+    const cats = getIncomeCategories();
+    const current = incCatEl.value;
+    incCatEl.innerHTML = '';
+    cats.forEach(c => { const opt = document.createElement('option'); opt.textContent = c; incCatEl.appendChild(opt); });
+    if (cats.includes(current)) incCatEl.value = current;
+
+    incCatChipsEl.innerHTML = '';
+    cats.forEach(c => {
+      const chip = document.createElement('span');
+      chip.style.cssText = 'background:#d1fae5;color:#065f46;border-radius:999px;padding:3px 10px;font-size:12px;display:inline-flex;align-items:center;gap:6px;';
+      chip.innerHTML = c + ' <span data-inccat="' + c + '" style="cursor:pointer;font-weight:700;color:#059669;">&times;</span>';
+      incCatChipsEl.appendChild(chip);
+    });
+    incCatChipsEl.querySelectorAll('span[data-inccat]').forEach(x => {
+      x.addEventListener('click', () => removeIncomeCategory(x.dataset.inccat));
+    });
+  }
+
+  function addIncomeCategory() {
+    const name = (newIncCatNameEl.value || '').trim();
+    if (!name) { alert('Type an income type first.'); return; }
+    const cats = getIncomeCategories();
+    if (cats.some(c => c.toLowerCase() === name.toLowerCase())) { alert('You already have a "' + name + '" income type.'); return; }
+    cats.push(name); setIncomeCategories(cats);
+    newIncCatNameEl.value = '';
+    renderIncomeCategories();
+    incCatEl.value = name;
+  }
+
+  function removeIncomeCategory(name) {
+    const used = getIncome().some(e => e.category === name);
+    const msg = used
+      ? 'Remove income type "' + name + '"? Past entries keep their label, but you won\u2019t be able to pick it for new ones.'
+      : 'Remove the "' + name + '" income type?';
+    if (!confirm(msg)) return;
+    setIncomeCategories(getIncomeCategories().filter(c => c !== name));
+    renderIncomeCategories();
+  }
+
+  function renderIncome() {
+    const month = currentBudgetMonth();
+    const inc = getIncome().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? 1 : -1);
+    incBody.innerHTML = '';
+    if (inc.length === 0) { incEmpty.style.display = 'block'; }
+    else {
+      incEmpty.style.display = 'none';
+      inc.forEach(e => {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + prettyDate(e.date) + '</td>' +
+          '<td>' + e.category + '</td>' +
+          '<td>' + (e.note || '\u2014') + '</td>' +
+          '<td style="color:#059669;">+$' + e.amount.toFixed(2) + '</td>' +
+          '<td><span class="del-link" data-incid="' + e.id + '">delete</span></td>';
+        incBody.appendChild(tr);
+      });
+      incBody.querySelectorAll('.del-link').forEach(link => {
+        link.addEventListener('click', () => {
+          setIncome(getIncome().filter(e => String(e.id) !== link.dataset.incid));
+          renderBudget();
+          if (document.getElementById('dashboardPage').classList.contains('active')) renderDashboard();
+          if (document.getElementById('flowPage').classList.contains('active')) renderFlow();
+        });
+      });
+    }
+  }
+
+  document.getElementById('addIncBtn').addEventListener('click', () => {
+    const amt = parseFloat(incAmtEl.value);
+    if (!amt || amt <= 0) { alert('Enter an income amount greater than 0.'); return; }
+    const date = incDateEl.value;
+    if (!date) { alert('Pick a date for this income.'); return; }
+    const inc = getIncome();
+    inc.push({ id: Date.now(), date, category: incCatEl.value, amount: amt, note: incNoteEl.value.trim() });
+    setIncome(inc);
+    incAmtEl.value = ''; incNoteEl.value = '';
+    budgetMonthEl.value = date.slice(0, 7);
+    renderBudget();
+  });
+
+  document.getElementById('addIncCatBtn').addEventListener('click', addIncomeCategory);
+  newIncCatNameEl.addEventListener('keydown', e => { if (e.key === 'Enter') addIncomeCategory(); });
 
   budgetMonthEl.addEventListener('change', renderBudget);
 
@@ -1061,12 +1229,17 @@
     const month = flowMonthEl.value || currentBudgetMonth();
     const gross = monthGross(month);
     const taxPct = budgetTaxOn() ? budgetTaxRateVal() : 0;
-    const income = gross * (1 - taxPct / 100);
+    const workNet = gross * (1 - taxPct / 100);
     const exp = getExpenses().filter(e => e.date.startsWith(month));
     const totalExp = exp.reduce((s, e) => s + e.amount, 0);
     const byCat = {};
     exp.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
-    drawSankey(month, gross, taxPct, byCat, Math.max(0, income - totalExp));
+    // Manual income grouped by type.
+    const byIncome = {};
+    getIncome().filter(e => e.date.startsWith(month)).forEach(e => { byIncome[e.category] = (byIncome[e.category] || 0) + e.amount; });
+    const otherIncome = Object.values(byIncome).reduce((s, v) => s + v, 0);
+    const totalNet = workNet + otherIncome;
+    drawSankey(month, gross, taxPct, byCat, Math.max(0, totalNet - totalExp), byIncome);
   }
   flowMonthEl.addEventListener('change', renderFlow);
   let googleReady = false;
@@ -1080,9 +1253,11 @@
     });
   }
 
-  function drawSankey(month, gross, taxPct, byCat, savings) {
-    if (gross <= 0) {
-      sankeyEl.innerHTML = '<div class="empty">Log some work hours to see your money flow.</div>';
+  function drawSankey(month, gross, taxPct, byCat, savings, byIncome) {
+    byIncome = byIncome || {};
+    const otherIncomeTotal = Object.values(byIncome).reduce((s, v) => s + v, 0);
+    if (gross <= 0 && otherIncomeTotal <= 0) {
+      sankeyEl.innerHTML = '<div class="empty">Log work hours or add other income to see your money flow.</div>';
       flowNote.textContent = 'See your income flow into taxes, expenses, and savings.';
       return;
     }
@@ -1095,18 +1270,19 @@
     const render = () => {
       const rows = [];
       const taxAmt = gross * (taxPct / 100);
-      if (taxAmt > 0) rows.push(['Income', 'Taxes', taxAmt]);
-      const takeHome = gross - taxAmt;
-      const cats = Object.keys(byCat);
-      if (cats.length === 0 && savings <= 0) {
-        if (taxAmt <= 0) {
-          sankeyEl.innerHTML = '<div class="empty">Add expenses to see where your money flows.</div>';
-          return;
-        }
-      }
-      cats.forEach(c => { if (byCat[c] > 0) rows.push(['Take-home', c, byCat[c]]); });
+      const workNet = gross - taxAmt;
+
+      // Each income source flows into the shared "Take-home" pool.
+      // Work income pays taxes first (out of gross), then its net joins the pool.
+      if (taxAmt > 0) rows.push(['Work income', 'Taxes', taxAmt]);
+      if (workNet > 0) rows.push(['Work income', 'Take-home', workNet]);
+      Object.keys(byIncome).forEach(src => {
+        if (byIncome[src] > 0) rows.push([src, 'Take-home', byIncome[src]]);
+      });
+
+      // Take-home splits into expense categories and savings.
+      Object.keys(byCat).forEach(c => { if (byCat[c] > 0) rows.push(['Take-home', c, byCat[c]]); });
       if (savings > 0) rows.push(['Take-home', 'Savings / Left over', savings]);
-      if (takeHome > 0) rows.push(['Income', 'Take-home', takeHome]);
 
       if (rows.length === 0) {
         sankeyEl.innerHTML = '<div class="empty">Add expenses to see where your money flows.</div>';
@@ -1349,11 +1525,14 @@
   function buildExportData(month) {
     const days = getHistory().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? -1 : 1);
     const exp = getExpenses().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? -1 : 1);
+    const income = getIncome().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? -1 : 1);
     const gross = days.reduce((s, e) => s + e.earnings, 0);
     const taxPct = taxOn() ? taxRate() : 0;
-    const net = gross * (1 - taxPct / 100);
+    const workNet = gross * (1 - taxPct / 100);
+    const otherIncome = income.reduce((s, e) => s + e.amount, 0);
+    const net = workNet + otherIncome;
     const totalExp = exp.reduce((s, e) => s + e.amount, 0);
-    return { days, exp, gross, taxPct, net, totalExp, leftover: net - totalExp };
+    return { days, exp, income, gross, taxPct, workNet, otherIncome, net, totalExp, leftover: net - totalExp };
   }
 
   document.getElementById('exportBtn').addEventListener('click', () => {
@@ -1370,14 +1549,16 @@
       ['Monthly Report', mn],
       [],
       ['Hours worked', d.days.reduce((s, e) => s + e.hours, 0)],
-      ['Gross earnings', d.gross],
+      ['Gross work earnings', d.gross],
       ['Tax rate (%)', d.taxPct],
-      ['Take-home pay', d.net],
+      ['Work income (take-home)', d.workNet],
+      ['Other income', d.otherIncome],
+      ['Total income', d.net],
       ['Total expenses', d.totalExp],
       ['Left over', d.leftover],
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
-    wsSummary['!cols'] = [{ wch: 22 }, { wch: 20 }];
+    wsSummary['!cols'] = [{ wch: 24 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
     const hoursRows = [['Date', 'Shift', 'Break', 'Hours', 'Earnings']];
@@ -1387,6 +1568,14 @@
     const wsHours = XLSX.utils.aoa_to_sheet(hoursRows);
     wsHours['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 8 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, wsHours, 'Hours');
+
+    const incRows = [['Date', 'Income type', 'Note', 'Amount']];
+    d.income.forEach(e => incRows.push([e.date, e.category, e.note || '', e.amount]));
+    incRows.push([]);
+    incRows.push(['', '', 'TOTAL', d.otherIncome]);
+    const wsInc = XLSX.utils.aoa_to_sheet(incRows);
+    wsInc['!cols'] = [{ wch: 12 }, { wch: 18 }, { wch: 24 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsInc, 'Other Income');
 
     const expRows = [['Date', 'Category', 'Note', 'Amount']];
     d.exp.forEach(e => expRows.push([e.date, e.category, e.note || '', e.amount]));
@@ -1408,15 +1597,21 @@
     lines.push([esc('Monthly Report'), esc(mn)].join(','));
     lines.push('');
     lines.push([esc('Hours worked'), d.days.reduce((s, e) => s + e.hours, 0)].join(','));
-    lines.push([esc('Gross earnings'), d.gross.toFixed(2)].join(','));
+    lines.push([esc('Gross work earnings'), d.gross.toFixed(2)].join(','));
     lines.push([esc('Tax rate (%)'), d.taxPct].join(','));
-    lines.push([esc('Take-home pay'), d.net.toFixed(2)].join(','));
+    lines.push([esc('Work income (take-home)'), d.workNet.toFixed(2)].join(','));
+    lines.push([esc('Other income'), d.otherIncome.toFixed(2)].join(','));
+    lines.push([esc('Total income'), d.net.toFixed(2)].join(','));
     lines.push([esc('Total expenses'), d.totalExp.toFixed(2)].join(','));
     lines.push([esc('Left over'), d.leftover.toFixed(2)].join(','));
     lines.push('');
     lines.push('HOURS');
     lines.push(['Date', 'Shift', 'Break', 'Hours', 'Earnings'].map(esc).join(','));
     d.days.forEach(e => lines.push([e.date, e.label, e.breakLabel || '', e.hours, e.earnings.toFixed(2)].map(esc).join(',')));
+    lines.push('');
+    lines.push('OTHER INCOME');
+    lines.push(['Date', 'Income type', 'Note', 'Amount'].map(esc).join(','));
+    d.income.forEach(e => lines.push([e.date, e.category, e.note || '', e.amount.toFixed(2)].map(esc).join(',')));
     lines.push('');
     lines.push('EXPENSES');
     lines.push(['Date', 'Category', 'Note', 'Amount'].map(esc).join(','));
@@ -1660,6 +1855,7 @@
     const tr = localStorage.getItem(TAX_RATE_KEY); if (tr !== null) { taxRateEl.value = tr; budgetTaxRate.value = tr; }
     const bl = localStorage.getItem(BREAK_LEN_KEY); breakLenEl.value = (bl === '60') ? '60' : '30';
     renderCategories();
+    renderIncomeCategories();
     updateDayTotals();
     renderHistory();
     renderBudget();
@@ -1844,6 +2040,7 @@
   flowMonthEl.value = thisMonth;
   dashMonthEl.value = thisMonth;
   renderCategories();
+  renderIncomeCategories();
   renderBlocks();
   updateDayTotals();
   renderHistory();
