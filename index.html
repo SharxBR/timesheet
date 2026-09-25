@@ -1,0 +1,1643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#6366f1">
+<title>Hours &amp; Money Tracker</title>
+<!-- SheetJS: creates real .xlsx Excel files (needs internet). Falls back to CSV if unavailable. -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+<!-- Google Charts: draws the Sankey money-flow diagram (needs internet). -->
+<script src="https://www.gstatic.com/charts/loader.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    background: #f4f6fb;
+    color: #1f2933;
+    padding: 24px;
+  }
+  .app {
+    max-width: 780px;
+    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 28px;
+  }
+  h1 { margin: 0 0 4px; font-size: 24px; }
+  h2 { font-size: 18px; margin: 28px 0 12px; }
+  .subtitle { margin: 0 0 20px; color: #6b7280; font-size: 14px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 6px; margin-bottom: 24px; border-bottom: 2px solid #eef0f4; flex-wrap: wrap; }
+  .tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    font-weight: 600;
+    color: #6b7280;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    user-select: none;
+  }
+  .tab.active { color: #4338ca; border-bottom-color: #6366f1; }
+  .page { display: none; }
+  .page.active { display: block; }
+  /* Give the flow chart room: widen the whole app on that tab. */
+  .app.wide { max-width: 1100px; }
+
+  .hint {
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    color: #3730a3;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .row label { font-weight: 600; }
+  input[type="number"], input[type="date"], input[type="month"], input[type="text"], input[type="password"], select {
+    padding: 8px 10px;
+    font-size: 15px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+  }
+  input[type="number"] { width: 110px; }
+  input[type="text"], input[type="password"] { min-width: 160px; }
+  .blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; margin-bottom: 20px; }
+  .block {
+    padding: 12px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #ffffff;
+    cursor: pointer;
+    text-align: center;
+    font-size: 13px;
+    transition: all 0.12s ease;
+    user-select: none;
+  }
+  .block:hover { border-color: #6366f1; }
+  .block.inrange { background: #6366f1; border-color: #6366f1; color: #ffffff; font-weight: 600; }
+  .block.endpoint { background: #4338ca; border-color: #4338ca; }
+  .break-row {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+  }
+  .totals { display: flex; gap: 16px; flex-wrap: wrap; }
+  .stat { flex: 1; min-width: 140px; background: #f8fafc; border-radius: 12px; padding: 16px; text-align: center; }
+  .stat .value { font-size: 26px; font-weight: 700; color: #4338ca; }
+  .stat .name { font-size: 13px; color: #6b7280; margin-top: 4px; }
+  button { font-size: 14px; padding: 9px 16px; border-radius: 8px; cursor: pointer; border: none; }
+  .primary { background: #6366f1; color: #fff; }
+  .primary:hover { background: #4f46e5; }
+  .ghost { background: #fff; border: 1px solid #d1d5db; color: #374151; }
+  .ghost:hover { background: #f9fafb; }
+  .green { background: #16a34a; color: #fff; }
+  .green:hover { background: #15803d; }
+  .danger { background: #ef4444; color: #fff; }
+  .danger:hover { background: #dc2626; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eef0f4; }
+  th { color: #6b7280; font-weight: 600; }
+  .empty { color: #9ca3af; font-size: 14px; padding: 12px 0; }
+  .summary-box {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 12px;
+    display: none;
+  }
+  .summary-box .big { font-size: 22px; font-weight: 700; color: #15803d; }
+  .del-link { color: #ef4444; cursor: pointer; font-size: 13px; }
+  hr { border: none; border-top: 1px solid #eef0f4; margin: 28px 0; }
+
+  /* Budget cards */
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .card { flex: 1; min-width: 150px; border-radius: 12px; padding: 16px; text-align: center; }
+  .card .num { font-size: 24px; font-weight: 700; }
+  .card .lbl { font-size: 13px; margin-top: 4px; }
+  .card.income { background: #ecfdf5; border: 1px solid #a7f3d0; }
+  .card.income .num { color: #059669; }
+  .card.expense { background: #fef2f2; border: 1px solid #fecaca; }
+  .card.expense .num { color: #dc2626; }
+  .card.left { background: #eff6ff; border: 1px solid #bfdbfe; }
+  .card.left .num { color: #2563eb; }
+  .catbar-wrap { margin-top: 6px; }
+  .catbar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .catbar-name { width: 90px; font-size: 13px; }
+  .catbar-track { flex: 1; background: #f1f5f9; border-radius: 6px; height: 16px; overflow: hidden; }
+  .catbar-fill { height: 100%; background: #6366f1; }
+  .catbar-amt { width: 80px; text-align: right; font-size: 13px; }
+
+  /* ===== Sync UI ===== */
+  .sync-bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;
+    padding: 10px 14px; margin-bottom: 20px; font-size: 13px;
+  }
+  .sync-dot { width: 10px; height: 10px; border-radius: 50%; background: #cbd5e1; flex: none; }
+  .sync-dot.ok { background: #22c55e; }
+  .sync-dot.syncing { background: #f59e0b; animation: pulse 1s infinite; }
+  .sync-dot.err { background: #ef4444; }
+  .sync-dot.off { background: #cbd5e1; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .sync-status { flex: 1; min-width: 140px; color: #475569; }
+  .sync-status b { color: #1e293b; }
+  .lock-note { background: #fef9c3; border: 1px solid #fde047; color: #854d0e; border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .setup-card { background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+  .setup-card .field { margin-bottom: 14px; }
+  .setup-card .field label { display: block; font-weight: 600; margin-bottom: 4px; color: #4c1d95; }
+  .setup-card .field .desc { font-size: 12px; color: #7c3aed; margin-bottom: 6px; }
+  .setup-card input[type="text"], .setup-card input[type="password"] { width: 100%; min-width: 0; }
+  .steps { font-size: 13px; color: #4c1d95; line-height: 1.6; }
+  .steps code { background: #ede9fe; padding: 1px 6px; border-radius: 5px; }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #1e293b; color: #fff; padding: 12px 20px; border-radius: 10px;
+    font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); z-index: 1000;
+    opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; text-align: center;
+  }
+  .toast.show { opacity: 1; }
+  .unlock-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.55);
+    display: flex; align-items: center; justify-content: center; z-index: 900; padding: 20px;
+  }
+  .unlock-box { background: #fff; border-radius: 16px; padding: 28px; max-width: 420px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .unlock-box h2 { margin-top: 0; }
+  .unlock-box input { width: 100%; margin: 10px 0; }
+  .link-btn { background: none; border: none; color: #6366f1; cursor: pointer; text-decoration: underline; font-size: 13px; padding: 0; }
+
+  @media (max-width: 560px) {
+    body { padding: 12px; }
+    .app { padding: 18px; }
+    input[type="number"] { width: 90px; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <h1>Hours &amp; Money Tracker</h1>
+
+    <div class="tabs">
+      <div class="tab active" data-page="timesheetPage">Timesheet</div>
+      <div class="tab" data-page="budgetPage">Budget</div>
+      <div class="tab" data-page="flowPage">Money Flow</div>
+      <div class="tab" data-page="syncPage">Sync &amp; Devices</div>
+    </div>
+
+    <!-- ============ TIMESHEET PAGE ============ -->
+    <div class="page active" id="timesheetPage">
+      <p class="subtitle">Log your work day, deduct breaks, save it, and see a monthly summary.</p>
+
+      <div class="row">
+        <label for="rate">Hourly rate: $</label>
+        <input type="number" id="rate" min="0" step="0.01" value="20" />
+        <span>per hour</span>
+      </div>
+
+      <div class="row">
+        <label for="workDate">Date worked:</label>
+        <input type="date" id="workDate" />
+      </div>
+
+      <div class="hint">
+        <strong>How to log time:</strong> Click your <em>start</em> time, then click your <em>end</em> time &mdash;
+        everything in between fills in automatically. Click a new start time to redo the range.
+      </div>
+
+      <div class="blocks" id="blocks"></div>
+
+      <div class="break-row">
+        <span style="color:#9a3412;font-size:13px;">A 30-minute break is deducted automatically when your shift is 6 hours or more.</span>
+      </div>
+
+      <div class="totals">
+        <div class="stat"><div class="value" id="dayHours">0</div><div class="name">Hours worked (after break)</div></div>
+        <div class="stat"><div class="value" id="dayEarnings">$0.00</div><div class="name">Earnings this day</div></div>
+      </div>
+
+      <div class="row" style="margin-top:20px;">
+        <button class="primary" id="saveBtn">Save this day to history</button>
+        <button class="ghost" id="resetBtn">Clear selection</button>
+      </div>
+
+      <hr />
+
+      <h2>History</h2>
+      <table id="historyTable">
+        <thead><tr><th>Date</th><th>Shift</th><th>Break</th><th>Hours</th><th>Earnings</th><th></th></tr></thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+      <div class="empty" id="historyEmpty">No saved days yet.</div>
+
+      <hr />
+
+      <h2>Monthly summary</h2>
+      <div class="row">
+        <label for="summaryMonth">Pick a month:</label>
+        <input type="month" id="summaryMonth" />
+        <button class="ghost" id="summaryBtn">Show summary</button>
+      </div>
+      <div class="row" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px 14px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="taxToggle" style="width:18px;height:18px;cursor:pointer;" />
+          Deduct taxes from this month
+        </label>
+        <span style="color:#075985;">Tax rate:</span>
+        <input type="number" id="taxRate" min="0" max="100" step="0.1" value="20" style="width:80px;" />
+        <span style="color:#075985;">%</span>
+      </div>
+      <div class="summary-box" id="summaryBox"></div>
+    </div>
+
+    <!-- ============ BUDGET PAGE ============ -->
+    <div class="page" id="budgetPage">
+      <p class="subtitle">Track spending against the money you earn. Work earnings pull in automatically.</p>
+
+      <div class="row">
+        <label for="budgetMonth">Month:</label>
+        <input type="month" id="budgetMonth" />
+      </div>
+
+      <div class="row" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px 14px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="budgetTaxToggle" style="width:18px;height:18px;cursor:pointer;" />
+          Show income after taxes
+        </label>
+        <span style="color:#075985;">Tax rate:</span>
+        <input type="number" id="budgetTaxRate" min="0" max="100" step="0.1" value="20" style="width:80px;" />
+        <span style="color:#075985;">%</span>
+      </div>
+
+      <div class="hint">
+        <strong>Add an expense:</strong> pick a category, type an amount, choose a date, then click Add.
+        Your work earnings for the month come in automatically from the Timesheet tab.
+      </div>
+
+      <div class="row">
+        <label for="expCat">Category:</label>
+        <select id="expCat"></select>
+        <label for="expAmt">$</label>
+        <input type="number" id="expAmt" min="0" step="0.01" placeholder="0.00" />
+        <input type="date" id="expDate" />
+        <input type="text" id="expNote" placeholder="note (optional)" />
+        <button class="primary" id="addExpBtn">Add expense</button>
+      </div>
+
+      <div class="row" style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:12px 14px;">
+        <label for="newCatName" style="color:#6b21a8;">Add your own category:</label>
+        <input type="text" id="newCatName" placeholder="e.g. Savings, Phone, Pets" />
+        <button class="ghost" id="addCatBtn">Add category</button>
+        <div id="catChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-left:6px;"></div>
+      </div>
+
+      <div class="row" style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;padding:12px 14px;">
+        <div style="flex:1;min-width:220px;">
+          <div style="font-weight:600;color:#155e75;">Import a bank statement</div>
+          <div style="font-size:12px;color:#0e7490;">Download your transactions from your bank as a CSV file, then pick it here. Nothing leaves your computer unencrypted.</div>
+        </div>
+        <input type="file" id="csvFile" accept=".csv,text/csv" />
+      </div>
+
+      <div id="reviewArea" style="display:none;border:1px solid #d1d5db;border-radius:12px;padding:16px;margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <h2 style="margin:0;">Review imported transactions</h2>
+          <span id="reviewCount" style="color:#6b7280;font-size:13px;"></span>
+        </div>
+        <p style="color:#b45309;font-size:13px;margin:6px 0 0;">Rows marked <strong>&#9888; pick one</strong> need a category before you can add them. Uncheck any row you don't want.</p>
+        <div style="overflow-x:auto;">
+          <table id="reviewTable">
+            <thead><tr><th>Add?</th><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr></thead>
+            <tbody id="reviewBody"></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:16px;">
+          <button class="primary" id="importBtn">Add these to my expenses</button>
+          <button class="ghost" id="cancelImportBtn">Cancel</button>
+        </div>
+      </div>
+
+      <div class="cards">
+        <div class="card income"><div class="num" id="cIncome">$0.00</div><div class="lbl" id="cIncomeLbl">Income (from work)</div></div>
+        <div class="card expense"><div class="num" id="cExpense">$0.00</div><div class="lbl">Expenses</div></div>
+        <div class="card left"><div class="num" id="cLeft">$0.00</div><div class="lbl">Left over</div></div>
+      </div>
+
+      <h2>Where your money went</h2>
+      <div class="catbar-wrap" id="catBars"></div>
+
+      <h2>Expenses this month</h2>
+      <table id="expTable">
+        <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Amount</th><th></th></tr></thead>
+        <tbody id="expBody"></tbody>
+      </table>
+      <div class="empty" id="expEmpty">No expenses added for this month yet.</div>
+
+      <hr />
+
+      <h2>Export to Excel</h2>
+      <p class="subtitle" id="exportNote">Download a clean spreadsheet with your hours and expenses for the selected month.</p>
+      <div class="row">
+        <button class="green" id="exportBtn">Download Excel file</button>
+        <button class="ghost" id="exportCsvBtn">Download CSV instead</button>
+      </div>
+
+      <hr />
+
+      <h2>Manual backup file</h2>
+      <div class="row" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;">
+        <div style="flex:1;min-width:240px;">
+          <div style="font-weight:600;color:#92400e;">Local safety net</div>
+          <div style="font-size:12px;color:#b45309;">
+            Cloud sync (the <strong>Sync &amp; Devices</strong> tab) handles moving between devices automatically.
+            This is an extra offline copy you can keep on a USB stick, just in case.
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <button class="ghost" id="backupBtn">Save a backup file</button>
+        <button class="ghost" id="restoreBtn">Load a backup file</button>
+        <input type="file" id="restoreFile" accept=".json,application/json" style="display:none;" />
+      </div>
+    </div>
+
+    <!-- ============ MONEY FLOW PAGE ============ -->
+    <div class="page" id="flowPage">
+      <p class="subtitle">See where your money goes at a glance. Income flows in on the left and splits into taxes, spending, and savings.</p>
+      <div class="row">
+        <label for="flowMonth">Month:</label>
+        <input type="month" id="flowMonth" />
+      </div>
+      <p class="subtitle" id="flowNote">See your income flow into taxes, expenses, and savings.</p>
+      <div id="sankeyChart" style="width:100%;height:600px;"></div>
+    </div>
+
+    <!-- ============ SYNC & DEVICES PAGE ============ -->
+    <div class="page" id="syncPage">
+      <p class="subtitle">Keep your hours and budget in sync across your computer and phone &mdash; safely encrypted so no one else can read it.</p>
+
+      <div class="sync-bar">
+        <span class="sync-dot off" id="syncDot"></span>
+        <span class="sync-status" id="syncStatus">Cloud sync is not set up yet.</span>
+        <button class="primary" id="syncNowBtn" style="display:none;">Sync now</button>
+        <button class="ghost" id="pullBtn" style="display:none;">Pull from cloud</button>
+      </div>
+
+      <div class="lock-note" id="lockNote" style="display:none;">
+        Your data is <strong>encrypted with a passphrase</strong>. If you forget the passphrase, the cloud copy cannot be recovered &mdash; there is no backdoor. Write it down somewhere safe.
+      </div>
+
+      <!-- Setup / not configured -->
+      <div class="setup-card" id="setupCard">
+        <h2 style="margin-top:0;">Set up encrypted cloud sync</h2>
+        <p class="subtitle" style="margin-bottom:16px;">One-time setup. Do this once per device. Your bank data is scrambled on <em>this</em> device before it ever leaves &mdash; the cloud only stores an unreadable blob.</p>
+
+        <details style="margin-bottom:16px;">
+          <summary style="cursor:pointer;font-weight:600;color:#4c1d95;">Step-by-step: get your GitHub token &amp; Gist ID (click to expand)</summary>
+          <div class="steps" style="margin-top:10px;">
+            <p><strong>A. Create a free GitHub account</strong> at <a href="https://github.com/signup" target="_blank" rel="noopener">github.com/signup</a> if you don't have one.</p>
+            <p><strong>B. Make a fine-grained token that can ONLY touch gists:</strong></p>
+            <ol>
+              <li>Go to <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Settings &rarr; Developer settings &rarr; Fine-grained tokens &rarr; Generate new</a>.</li>
+              <li>Name it <code>timesheet-sync</code>, set an expiry (e.g. 1 year).</li>
+              <li>Under <strong>Account permissions</strong>, find <code>Gists</code> and set it to <strong>Read and write</strong>. Leave everything else as "No access".</li>
+              <li>Click <strong>Generate token</strong> and copy the <code>github_pat_...</code> value.</li>
+            </ol>
+            <p><strong>C. Create the secret Gist that will hold your encrypted data:</strong></p>
+            <ol>
+              <li>Go to <a href="https://gist.github.com" target="_blank" rel="noopener">gist.github.com</a>.</li>
+              <li>Filename: <code>timesheet-data.json</code>, content: just type <code>{}</code>.</li>
+              <li>Click <strong>Create secret gist</strong> (the dropdown next to the button).</li>
+              <li>Copy the <strong>Gist ID</strong> from the URL &mdash; it's the long code after your username, e.g. <code>gist.github.com/you/<b>abc123def456</b></code>.</li>
+            </ol>
+            <p><strong>D. Paste both below, pick a passphrase, and click Connect.</strong> On your phone and other computers, use the <em>same</em> token, Gist ID, and passphrase.</p>
+          </div>
+        </details>
+
+        <div class="field">
+          <label for="ghToken">GitHub token</label>
+          <div class="desc">The <code>github_pat_...</code> value. Stored only in this browser, never uploaded.</div>
+          <input type="password" id="ghToken" placeholder="github_pat_..." autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="ghGist">Gist ID</label>
+          <div class="desc">The long code from your secret gist's URL.</div>
+          <input type="text" id="ghGist" placeholder="abc123def456..." autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="passSet">Passphrase (encrypts your data)</label>
+          <div class="desc">Choose something you'll remember. Use the SAME passphrase on every device. There is no recovery if lost.</div>
+          <input type="password" id="passSet" placeholder="a strong passphrase" autocomplete="new-password" />
+          <input type="password" id="passSet2" placeholder="type it again to confirm" autocomplete="new-password" style="margin-top:8px;" />
+        </div>
+        <div class="row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+            <input type="checkbox" id="autoSyncChk" checked style="width:16px;height:16px;" />
+            Auto-sync whenever I save changes
+          </label>
+        </div>
+        <div class="row">
+          <button class="primary" id="connectBtn">Connect &amp; sync</button>
+        </div>
+      </div>
+
+      <!-- Connected controls -->
+      <div id="connectedCard" style="display:none;">
+        <div class="hint">
+          <strong>Connected.</strong> This device syncs to your secret Gist. Open this same web address on your phone or another computer, connect it with the same details, and everything appears.
+        </div>
+        <div class="row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;">
+            <input type="checkbox" id="autoSyncChk2" style="width:16px;height:16px;" />
+            Auto-sync whenever I save changes
+          </label>
+        </div>
+        <div class="row">
+          <button class="ghost" id="forgetBtn">Disconnect this device</button>
+          <button class="ghost" id="changePassBtn">Change passphrase</button>
+        </div>
+        <p class="subtitle" style="margin-top:8px;">Disconnecting removes the token and passphrase from <em>this</em> device only. Your local data stays; your cloud copy is untouched.</p>
+      </div>
+
+      <hr />
+      <h2>Add to your phone</h2>
+      <div class="steps" style="color:#475569;">
+        <p><strong>iPhone (Safari):</strong> open this page &rarr; tap the <strong>Share</strong> icon &rarr; <strong>Add to Home Screen</strong>.</p>
+        <p><strong>Android (Chrome):</strong> open this page &rarr; tap the <strong>⋮</strong> menu &rarr; <strong>Add to Home screen</strong>.</p>
+        <p>It then opens like a normal app. Connect sync once with your token, Gist ID and passphrase, and your data is there.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  // ================= SHARED STORAGE =================
+  const RATE_KEY = 'ht_rate';
+  const HISTORY_KEY = 'ht_history';
+  const TAX_ON_KEY = 'ht_tax_on';
+  const TAX_RATE_KEY = 'ht_tax_rate';
+  const EXPENSES_KEY = 'ht_expenses';
+  const CATEGORIES_KEY = 'ht_categories';
+  const LEARNED_KEY = 'ht_learned_rules';
+  const DEFAULT_CATEGORIES = ['Rent', 'Food', 'Transport', 'Utilities', 'Fun', 'Other'];
+
+  // Keys that make up "all the user's data" — synced & backed up together.
+  const ALL_KEYS = [RATE_KEY, HISTORY_KEY, TAX_ON_KEY, TAX_RATE_KEY, EXPENSES_KEY, CATEGORIES_KEY, LEARNED_KEY];
+
+  // Sync config keys (NOT synced — they are per-device secrets/settings).
+  const SYNC_TOKEN_KEY = 'ht_sync_token';
+  const SYNC_GIST_KEY = 'ht_sync_gist';
+  const SYNC_AUTO_KEY = 'ht_sync_auto';
+  const SYNC_LASTPULL_KEY = 'ht_sync_last';   // ISO time of the data we last have
+  const DATA_STAMP_KEY = 'ht_data_stamp';     // ISO time our local data was last changed
+
+  function getCategories() {
+    try {
+      const c = JSON.parse(localStorage.getItem(CATEGORIES_KEY) || 'null');
+      return Array.isArray(c) && c.length ? c : DEFAULT_CATEGORIES.slice();
+    } catch (e) { return DEFAULT_CATEGORIES.slice(); }
+  }
+  function setCategories(arr) { localStorage.setItem(CATEGORIES_KEY, JSON.stringify(arr)); touchData(); }
+
+  function getHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+  function setHistory(arr) { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); touchData(); }
+  function getExpenses() {
+    try { return JSON.parse(localStorage.getItem(EXPENSES_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+  function setExpenses(arr) { localStorage.setItem(EXPENSES_KEY, JSON.stringify(arr)); touchData(); }
+
+  function prettyDate(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function monthName(month) {
+    const [y, m] = month.split('-');
+    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }
+
+  function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  // Mark the local data as changed "now", and kick off an auto-sync if enabled.
+  function touchData() {
+    localStorage.setItem(DATA_STAMP_KEY, new Date().toISOString());
+    scheduleAutoSync();
+  }
+
+  // ================= TABS =================
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(tab.dataset.page).classList.add('active');
+      const app = document.querySelector('.app');
+      if (tab.dataset.page === 'budgetPage') renderBudget();
+      if (tab.dataset.page === 'syncPage') renderSyncUI();
+      if (tab.dataset.page === 'flowPage') {
+        app.classList.add('wide');
+        flowMonthEl.value = currentBudgetMonth();
+        renderFlow();
+      } else {
+        app.classList.remove('wide');
+      }
+    });
+  });
+
+  // ================= TIMESHEET =================
+  const startHour = 8, endHour = 17;
+  const blocksEl = document.getElementById('blocks');
+  const rateEl = document.getElementById('rate');
+  const taxToggleEl = document.getElementById('taxToggle');
+  const taxRateEl = document.getElementById('taxRate');
+  const workDateEl = document.getElementById('workDate');
+  const dayHoursEl = document.getElementById('dayHours');
+  const dayEarningsEl = document.getElementById('dayEarnings');
+  const historyBody = document.getElementById('historyBody');
+  const historyEmpty = document.getElementById('historyEmpty');
+  const summaryMonthEl = document.getElementById('summaryMonth');
+  const summaryBox = document.getElementById('summaryBox');
+
+  const ticks = [];
+  for (let h = startHour; h <= endHour; h++) {
+    for (let m of [0, 30]) {
+      if (h === endHour && m === 30) break;
+      ticks.push({ h, m });
+    }
+  }
+  function fmt(t) {
+    const suffix = t.h >= 12 ? 'PM' : 'AM';
+    let hh = t.h % 12; if (hh === 0) hh = 12;
+    return hh + ':' + (t.m === 0 ? '00' : '30') + ' ' + suffix;
+  }
+
+  let firstClick = null, range = null;
+
+  const savedRate = localStorage.getItem(RATE_KEY);
+  if (savedRate !== null) rateEl.value = savedRate;
+  if (localStorage.getItem(TAX_ON_KEY) === 'true') taxToggleEl.checked = true;
+  const savedTaxRate = localStorage.getItem(TAX_RATE_KEY);
+  if (savedTaxRate !== null) taxRateEl.value = savedTaxRate;
+
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0, 10);
+  const thisMonth = today.toISOString().slice(0, 7);
+  workDateEl.value = todayISO;
+  summaryMonthEl.value = thisMonth;
+
+  function renderBlocks() {
+    blocksEl.innerHTML = '';
+    ticks.forEach((t, i) => {
+      const el = document.createElement('div');
+      el.className = 'block';
+      el.textContent = fmt(t);
+      if (range) {
+        if (i >= range.start && i <= range.end) el.classList.add('inrange');
+        if (i === range.start || i === range.end) el.classList.add('endpoint');
+      } else if (firstClick === i) {
+        el.classList.add('endpoint'); el.classList.add('inrange');
+      }
+      el.addEventListener('click', () => onBlockClick(i));
+      blocksEl.appendChild(el);
+    });
+  }
+  function onBlockClick(i) {
+    if (firstClick === null) { firstClick = i; range = null; }
+    else { range = { start: Math.min(firstClick, i), end: Math.max(firstClick, i) }; firstClick = null; }
+    renderBlocks(); updateDayTotals();
+  }
+
+  function breakHours() { return shiftHours() >= 6 ? 0.5 : 0; }
+  function shiftHours() { return range ? (range.end - range.start) * 0.5 : 0; }
+  function workedHours() { return Math.max(0, shiftHours() - breakHours()); }
+  function shiftLabel() { return range ? fmt(ticks[range.start]) + ' \u2013 ' + fmt(ticks[range.end]) : ''; }
+  function breakLabel() { return breakHours() > 0 ? '30 min' : '\u2014'; }
+
+  function taxOn() { return taxToggleEl.checked; }
+  function taxRate() { return Math.min(100, Math.max(0, parseFloat(taxRateEl.value) || 0)); }
+
+  function updateDayTotals() {
+    const hours = workedHours();
+    const rate = parseFloat(rateEl.value) || 0;
+    dayHoursEl.textContent = hours;
+    dayEarningsEl.textContent = '$' + (hours * rate).toFixed(2);
+    localStorage.setItem(RATE_KEY, rateEl.value);
+  }
+
+  function renderHistory() {
+    const hist = getHistory().sort((a, b) => a.date < b.date ? 1 : -1);
+    historyBody.innerHTML = '';
+    if (hist.length === 0) { historyEmpty.style.display = 'block'; return; }
+    historyEmpty.style.display = 'none';
+    hist.forEach(entry => {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + prettyDate(entry.date) + '</td>' +
+        '<td>' + entry.label + '</td>' +
+        '<td>' + (entry.breakLabel || '\u2014') + '</td>' +
+        '<td>' + entry.hours + '</td>' +
+        '<td>$' + entry.earnings.toFixed(2) + '</td>' +
+        '<td><span class="del-link" data-date="' + entry.date + '">delete</span></td>';
+      historyBody.appendChild(tr);
+    });
+    historyBody.querySelectorAll('.del-link').forEach(link => {
+      link.addEventListener('click', () => {
+        setHistory(getHistory().filter(e => e.date !== link.dataset.date));
+        renderHistory();
+      });
+    });
+  }
+
+  document.getElementById('saveBtn').addEventListener('click', () => {
+    const hours = workedHours();
+    if (shiftHours() <= 0) { alert('Click a start time and then an end time first.'); return; }
+    const date = workDateEl.value;
+    if (!date) { alert('Please choose the date you worked.'); return; }
+    const rate = parseFloat(rateEl.value) || 0;
+    const entry = { date, label: shiftLabel(), breakLabel: breakLabel(), hours, earnings: hours * rate };
+    const hist = getHistory().filter(e => e.date !== date);
+    hist.push(entry); setHistory(hist); renderHistory();
+    firstClick = null; range = null; renderBlocks(); updateDayTotals();
+    alert('Saved ' + entry.hours + ' hours for ' + prettyDate(date) + '.');
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    firstClick = null; range = null; renderBlocks(); updateDayTotals();
+  });
+
+  rateEl.addEventListener('input', updateDayTotals);
+  rateEl.addEventListener('change', touchData);
+  taxToggleEl.addEventListener('change', () => { persistTax(); showSummary(); });
+  taxRateEl.addEventListener('input', () => { persistTax(); showSummary(); });
+  function persistTax() {
+    localStorage.setItem(TAX_ON_KEY, taxOn());
+    localStorage.setItem(TAX_RATE_KEY, taxRateEl.value);
+    touchData();
+  }
+
+  function monthGross(month) {
+    return getHistory().filter(e => e.date.startsWith(month)).reduce((s, e) => s + e.earnings, 0);
+  }
+
+  function showSummary() {
+    const month = summaryMonthEl.value;
+    if (!month) return;
+    const hist = getHistory().filter(e => e.date.startsWith(month));
+    const totalHours = hist.reduce((s, e) => s + e.hours, 0);
+    const totalGross = hist.reduce((s, e) => s + e.earnings, 0);
+    const mn = monthName(month);
+    if (hist.length === 0) {
+      summaryBox.innerHTML = 'No hours logged for ' + mn + ' yet.';
+    } else if (taxOn()) {
+      const net = totalGross * (1 - taxRate() / 100);
+      const taxAmt = totalGross - net;
+      summaryBox.innerHTML =
+        '<div>Summary for <strong>' + mn + '</strong></div>' +
+        '<div class="big">' + totalHours + ' hours</div>' +
+        '<div style="margin-top:8px;">Gross: <strong>$' + totalGross.toFixed(2) + '</strong></div>' +
+        '<div style="color:#b91c1c;">Taxes (' + taxRate() + '%): &minus;$' + taxAmt.toFixed(2) + '</div>' +
+        '<div style="font-size:20px;font-weight:700;color:#15803d;margin-top:6px;">Take-home: $' + net.toFixed(2) + '</div>' +
+        '<div style="color:#166534;font-size:13px;margin-top:4px;">' + hist.length + ' day(s) logged</div>';
+    } else {
+      summaryBox.innerHTML =
+        '<div>Summary for <strong>' + mn + '</strong></div>' +
+        '<div class="big">' + totalHours + ' hours &nbsp;&bull;&nbsp; $' + totalGross.toFixed(2) + '</div>' +
+        '<div style="color:#166534;font-size:13px;margin-top:4px;">' + hist.length + ' day(s) logged</div>';
+    }
+    summaryBox.style.display = 'block';
+  }
+  document.getElementById('summaryBtn').addEventListener('click', showSummary);
+
+  // ================= BUDGET =================
+  const budgetMonthEl = document.getElementById('budgetMonth');
+  const expCatEl = document.getElementById('expCat');
+  const newCatNameEl = document.getElementById('newCatName');
+  const catChipsEl = document.getElementById('catChips');
+  const expAmtEl = document.getElementById('expAmt');
+  const expDateEl = document.getElementById('expDate');
+  const expNoteEl = document.getElementById('expNote');
+  const expBody = document.getElementById('expBody');
+  const expEmpty = document.getElementById('expEmpty');
+  const cIncome = document.getElementById('cIncome');
+  const cIncomeLbl = document.getElementById('cIncomeLbl');
+  const cExpense = document.getElementById('cExpense');
+  const cLeft = document.getElementById('cLeft');
+  const catBars = document.getElementById('catBars');
+  const budgetTaxToggle = document.getElementById('budgetTaxToggle');
+  const budgetTaxRate = document.getElementById('budgetTaxRate');
+  const sankeyEl = document.getElementById('sankeyChart');
+  const flowNote = document.getElementById('flowNote');
+  const flowMonthEl = document.getElementById('flowMonth');
+
+  if (localStorage.getItem(TAX_ON_KEY) === 'true') budgetTaxToggle.checked = true;
+  if (savedTaxRate !== null) budgetTaxRate.value = savedTaxRate;
+  budgetTaxToggle.addEventListener('change', () => {
+    taxToggleEl.checked = budgetTaxToggle.checked;
+    persistTax(); renderBudget(); showSummary();
+    if (document.getElementById('flowPage').classList.contains('active')) renderFlow();
+  });
+  budgetTaxRate.addEventListener('input', () => {
+    taxRateEl.value = budgetTaxRate.value;
+    persistTax(); renderBudget(); showSummary();
+    if (document.getElementById('flowPage').classList.contains('active')) renderFlow();
+  });
+  function budgetTaxOn() { return budgetTaxToggle.checked; }
+  function budgetTaxRateVal() { return Math.min(100, Math.max(0, parseFloat(budgetTaxRate.value) || 0)); }
+
+  budgetMonthEl.value = thisMonth;
+  expDateEl.value = todayISO;
+
+  document.getElementById('addExpBtn').addEventListener('click', () => {
+    const amt = parseFloat(expAmtEl.value);
+    if (!amt || amt <= 0) { alert('Enter an amount greater than 0.'); return; }
+    const date = expDateEl.value;
+    if (!date) { alert('Pick a date for this expense.'); return; }
+    const exp = getExpenses();
+    exp.push({ id: Date.now(), date, category: expCatEl.value, amount: amt, note: expNoteEl.value.trim() });
+    setExpenses(exp);
+    expAmtEl.value = ''; expNoteEl.value = '';
+    budgetMonthEl.value = date.slice(0, 7);
+    renderBudget();
+  });
+
+  function currentBudgetMonth() { return budgetMonthEl.value || thisMonth; }
+
+  function renderCategories() {
+    const cats = getCategories();
+    const current = expCatEl.value;
+    expCatEl.innerHTML = '';
+    cats.forEach(c => {
+      const opt = document.createElement('option');
+      opt.textContent = c;
+      expCatEl.appendChild(opt);
+    });
+    if (cats.includes(current)) expCatEl.value = current;
+
+    catChipsEl.innerHTML = '';
+    cats.forEach(c => {
+      const chip = document.createElement('span');
+      chip.style.cssText = 'background:#ede9fe;color:#5b21b6;border-radius:999px;padding:3px 10px;font-size:12px;display:inline-flex;align-items:center;gap:6px;';
+      chip.innerHTML = c + ' <span data-cat="' + c + '" style="cursor:pointer;font-weight:700;color:#7c3aed;">&times;</span>';
+      catChipsEl.appendChild(chip);
+    });
+    catChipsEl.querySelectorAll('span[data-cat]').forEach(x => {
+      x.addEventListener('click', () => removeCategory(x.dataset.cat));
+    });
+  }
+
+  function addCategory() {
+    const name = (newCatNameEl.value || '').trim();
+    if (!name) { alert('Type a category name first.'); return; }
+    const cats = getCategories();
+    if (cats.some(c => c.toLowerCase() === name.toLowerCase())) {
+      alert('You already have a "' + name + '" category.');
+      return;
+    }
+    cats.push(name);
+    setCategories(cats);
+    newCatNameEl.value = '';
+    renderCategories();
+    expCatEl.value = name;
+  }
+
+  function removeCategory(name) {
+    const used = getExpenses().some(e => e.category === name);
+    const msg = used
+      ? 'Remove "' + name + '"? Past expenses in this category keep their label, but you won\u2019t be able to pick it for new ones.'
+      : 'Remove the "' + name + '" category?';
+    if (!confirm(msg)) return;
+    setCategories(getCategories().filter(c => c !== name));
+    renderCategories();
+  }
+
+  document.getElementById('addCatBtn').addEventListener('click', addCategory);
+  newCatNameEl.addEventListener('keydown', e => { if (e.key === 'Enter') addCategory(); });
+
+  function renderBudget() {
+    const month = currentBudgetMonth();
+    const gross = monthGross(month);
+    const taxPct = budgetTaxOn() ? budgetTaxRateVal() : 0;
+    const income = gross * (1 - taxPct / 100);
+    const exp = getExpenses().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? 1 : -1);
+    const totalExp = exp.reduce((s, e) => s + e.amount, 0);
+
+    cIncome.textContent = '$' + income.toFixed(2);
+    cIncomeLbl.textContent = budgetTaxOn() ? 'Take-home income' : 'Income (from work)';
+    cExpense.textContent = '$' + totalExp.toFixed(2);
+    const left = income - totalExp;
+    cLeft.textContent = (left < 0 ? '-$' : '$') + Math.abs(left).toFixed(2);
+
+    const byCat = {};
+    exp.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    catBars.innerHTML = '';
+    const cats = Object.keys(byCat);
+    if (cats.length === 0) {
+      catBars.innerHTML = '<div class="empty">No spending to break down yet.</div>';
+    } else {
+      const max = Math.max(...cats.map(c => byCat[c]));
+      cats.sort((a, b) => byCat[b] - byCat[a]).forEach(c => {
+        const pct = max > 0 ? Math.round(byCat[c] / max * 100) : 0;
+        const rowEl = document.createElement('div');
+        rowEl.className = 'catbar-row';
+        rowEl.innerHTML =
+          '<div class="catbar-name">' + c + '</div>' +
+          '<div class="catbar-track"><div class="catbar-fill" style="width:' + pct + '%"></div></div>' +
+          '<div class="catbar-amt">$' + byCat[c].toFixed(2) + '</div>';
+        catBars.appendChild(rowEl);
+      });
+    }
+
+    expBody.innerHTML = '';
+    if (exp.length === 0) { expEmpty.style.display = 'block'; }
+    else {
+      expEmpty.style.display = 'none';
+      exp.forEach(e => {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + prettyDate(e.date) + '</td>' +
+          '<td>' + e.category + '</td>' +
+          '<td>' + (e.note || '\u2014') + '</td>' +
+          '<td>$' + e.amount.toFixed(2) + '</td>' +
+          '<td><span class="del-link" data-id="' + e.id + '">delete</span></td>';
+        expBody.appendChild(tr);
+      });
+      expBody.querySelectorAll('.del-link').forEach(link => {
+        link.addEventListener('click', () => {
+          setExpenses(getExpenses().filter(e => String(e.id) !== link.dataset.id));
+          renderBudget();
+        });
+      });
+    }
+  }
+
+  budgetMonthEl.addEventListener('change', renderBudget);
+
+  // ================= MONEY-FLOW SANKEY =================
+  function renderFlow() {
+    const month = flowMonthEl.value || currentBudgetMonth();
+    const gross = monthGross(month);
+    const taxPct = budgetTaxOn() ? budgetTaxRateVal() : 0;
+    const income = gross * (1 - taxPct / 100);
+    const exp = getExpenses().filter(e => e.date.startsWith(month));
+    const totalExp = exp.reduce((s, e) => s + e.amount, 0);
+    const byCat = {};
+    exp.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    drawSankey(month, gross, taxPct, byCat, Math.max(0, income - totalExp));
+  }
+  flowMonthEl.addEventListener('change', renderFlow);
+  let googleReady = false;
+  let pendingDraw = null;
+  if (typeof google !== 'undefined' && google.charts) {
+    google.charts.load('current', { packages: ['sankey'] });
+    google.charts.setOnLoadCallback(() => {
+      googleReady = true;
+      if (pendingDraw) { pendingDraw(); pendingDraw = null; }
+      if (document.getElementById('flowPage').classList.contains('active')) renderFlow();
+    });
+  }
+
+  function drawSankey(month, gross, taxPct, byCat, savings) {
+    if (gross <= 0) {
+      sankeyEl.innerHTML = '<div class="empty">Log some work hours to see your money flow.</div>';
+      flowNote.textContent = 'See your income flow into taxes, expenses, and savings.';
+      return;
+    }
+    if (typeof google === 'undefined' || !google.charts) {
+      sankeyEl.innerHTML = '<div class="empty">The flow chart needs an internet connection. Everything else still works offline.</div>';
+      flowNote.textContent = 'Connect to the internet to see the money-flow chart.';
+      return;
+    }
+
+    const render = () => {
+      const rows = [];
+      const taxAmt = gross * (taxPct / 100);
+      if (taxAmt > 0) rows.push(['Income', 'Taxes', taxAmt]);
+      const takeHome = gross - taxAmt;
+      const cats = Object.keys(byCat);
+      if (cats.length === 0 && savings <= 0) {
+        if (taxAmt <= 0) {
+          sankeyEl.innerHTML = '<div class="empty">Add expenses to see where your money flows.</div>';
+          return;
+        }
+      }
+      cats.forEach(c => { if (byCat[c] > 0) rows.push(['Take-home', c, byCat[c]]); });
+      if (savings > 0) rows.push(['Take-home', 'Savings / Left over', savings]);
+      if (takeHome > 0) rows.push(['Income', 'Take-home', takeHome]);
+
+      if (rows.length === 0) {
+        sankeyEl.innerHTML = '<div class="empty">Add expenses to see where your money flows.</div>';
+        return;
+      }
+
+      const data = new google.visualization.DataTable();
+      data.addColumn('string', 'From');
+      data.addColumn('string', 'To');
+      data.addColumn('number', 'Amount');
+      data.addRows(rows);
+
+      const options = {
+        height: 400,
+        sankey: {
+          node: {
+            width: 14,
+            nodePadding: 26,
+            label: { fontName: 'Segoe UI', fontSize: 14, color: '#1f2933', bold: true },
+            colors: ['#6366f1', '#ef4444', '#22c55e', '#f59e0b', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6', '#64748b']
+          },
+          link: { colorMode: 'gradient', color: { fillOpacity: 0.5 } }
+        }
+      };
+      const chart = new google.visualization.Sankey(sankeyEl);
+      chart.draw(data, options);
+      flowNote.textContent = 'Income for ' + monthName(month) + ' flowing into taxes, spending, and savings. Thicker ribbons = more money.';
+    };
+
+    if (googleReady) render();
+    else pendingDraw = render;
+  }
+
+  // ================= BANK STATEMENT IMPORT =================
+  const csvFileEl = document.getElementById('csvFile');
+  const reviewArea = document.getElementById('reviewArea');
+  const reviewBody = document.getElementById('reviewBody');
+  const reviewCount = document.getElementById('reviewCount');
+
+  function getLearned() {
+    try { return JSON.parse(localStorage.getItem(LEARNED_KEY) || '{}') || {}; }
+    catch (e) { return {}; }
+  }
+  function setLearned(obj) { localStorage.setItem(LEARNED_KEY, JSON.stringify(obj)); touchData(); }
+
+  function keywordFrom(desc) {
+    const clean = (desc || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ');
+    const tokens = clean.split(/\s+/).filter(t => t.length >= 4 && !/^\d+$/.test(t));
+    if (tokens.length) return tokens.sort((a, b) => b.length - a.length)[0];
+    return clean.trim().split(/\s+/).slice(0, 2).join(' ');
+  }
+
+  function learnRule(desc, category) {
+    if (!category) return;
+    const kw = keywordFrom(desc);
+    if (!kw) return;
+    const learned = getLearned();
+    learned[kw] = category;
+    setLearned(learned);
+  }
+
+  const GUESS_RULES = [
+    { cat: 'Food', words: ['grocery', 'groceries', 'safeway', 'kroger', 'trader joe', 'whole foods', 'aldi', 'restaurant', 'cafe', 'coffee', 'starbucks', 'mcdonald', 'chipotle', 'pizza', 'doordash', 'uber eats', 'grubhub', 'deli', 'market'] },
+    { cat: 'Transport', words: ['shell', 'chevron', 'exxon', 'bp ', 'gas', 'fuel', 'uber', 'lyft', 'transit', 'parking', 'toll', 'metro', 'auto', 'car wash'] },
+    { cat: 'Utilities', words: ['electric', 'water', 'gas company', 'pg&e', 'comcast', 'xfinity', 'at&t', 'verizon', 't-mobile', 'internet', 'phone', 'utility', 'sewer', 'power'] },
+    { cat: 'Rent', words: ['rent', 'landlord', 'apartment', 'property mgmt', 'lease', 'mortgage'] },
+    { cat: 'Fun', words: ['netflix', 'spotify', 'hulu', 'disney', 'cinema', 'movie', 'game', 'steam', 'playstation', 'xbox', 'bar ', 'concert', 'amazon prime'] }
+  ];
+
+  function guessCategory(desc) {
+    const d = (desc || '').toLowerCase();
+    const learned = getLearned();
+    for (const kw of Object.keys(learned)) {
+      if (kw && d.includes(kw) && getCategories().includes(learned[kw])) {
+        return { category: learned[kw], confident: true };
+      }
+    }
+    for (const rule of GUESS_RULES) {
+      if (rule.words.some(w => d.includes(w))) {
+        if (getCategories().includes(rule.cat)) return { category: rule.cat, confident: true };
+      }
+    }
+    return { category: '', confident: false };
+  }
+
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else field += c;
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i + 1] === '\n') i++;
+          if (field !== '' || row.length) { row.push(field); rows.push(row); row = []; field = ''; }
+        } else field += c;
+      }
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function detectColumns(header) {
+    const h = header.map(x => x.toLowerCase().trim());
+    const find = (opts) => h.findIndex(x => opts.some(o => x.includes(o)));
+    return {
+      date: find(['date', 'posted', 'transaction date']),
+      desc: find(['description', 'memo', 'name', 'payee', 'details', 'merchant']),
+      amount: find(['amount', 'debit', 'withdrawal', 'value'])
+    };
+  }
+
+  function toISODate(s) {
+    s = (s || '').trim();
+    let d = new Date(s);
+    if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    const m = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    if (m) {
+      let [_, mm, dd, yy] = m;
+      if (yy.length === 2) yy = '20' + yy;
+      d = new Date(+yy, +mm - 1, +dd);
+      if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    }
+    return '';
+  }
+
+  function parseAmount(s) {
+    if (s == null) return NaN;
+    let neg = /^\(.*\)$/.test(s.trim());
+    let n = parseFloat(String(s).replace(/[^0-9.\-]/g, ''));
+    if (neg) n = -Math.abs(n);
+    return n;
+  }
+
+  let pendingRows = [];
+
+  csvFileEl.addEventListener('change', () => {
+    const file = csvFileEl.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const rows = parseCSV(reader.result).filter(r => r.some(c => c.trim() !== ''));
+        if (rows.length < 2) { alert('That file has no transactions I can read.'); return; }
+        const cols = detectColumns(rows[0]);
+        if (cols.date < 0 || cols.amount < 0) {
+          alert('I could not find Date and Amount columns in this file. Make sure it is a transactions CSV exported from your bank.');
+          return;
+        }
+        pendingRows = [];
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i];
+          const date = toISODate(r[cols.date]);
+          const desc = cols.desc >= 0 ? (r[cols.desc] || '').trim() : 'Transaction';
+          let amt = parseAmount(r[cols.amount]);
+          if (!date || isNaN(amt) || amt === 0) continue;
+          const spend = amt < 0 ? Math.abs(amt) : amt;
+          const g = guessCategory(desc);
+          pendingRows.push({ date, desc, amount: spend, category: g.category, confident: g.confident, include: true });
+        }
+        if (pendingRows.length === 0) { alert('No spending transactions found in that file.'); return; }
+        renderReview();
+      } catch (e) {
+        alert('Sorry, I had trouble reading that file. It may be in an unusual format.');
+      }
+      csvFileEl.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  function catOptionsHTML(selected) {
+    let opts = '<option value="">&#9888; pick one</option>';
+    getCategories().forEach(c => {
+      opts += '<option' + (c === selected ? ' selected' : '') + '>' + c + '</option>';
+    });
+    return opts;
+  }
+
+  function renderReview() {
+    reviewBody.innerHTML = '';
+    pendingRows.forEach((row, idx) => {
+      const tr = document.createElement('tr');
+      const needsCat = !row.category;
+      tr.style.background = needsCat ? '#fffbeb' : '';
+      tr.innerHTML =
+        '<td><input type="checkbox" data-i="' + idx + '" class="rvInc" ' + (row.include ? 'checked' : '') + ' style="width:16px;height:16px;"></td>' +
+        '<td>' + prettyDate(row.date) + '</td>' +
+        '<td>' + row.desc + '</td>' +
+        '<td>$' + row.amount.toFixed(2) + '</td>' +
+        '<td><select data-i="' + idx + '" class="rvCat">' + catOptionsHTML(row.category) + '</select>' +
+        (needsCat ? ' <span style="color:#b45309;font-size:12px;">&#9888; pick one</span>' : '') + '</td>';
+      reviewBody.appendChild(tr);
+    });
+    reviewBody.querySelectorAll('.rvCat').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const i = +sel.dataset.i;
+        pendingRows[i].category = sel.value;
+        renderReview();
+      });
+    });
+    reviewBody.querySelectorAll('.rvInc').forEach(cb => {
+      cb.addEventListener('change', () => { pendingRows[+cb.dataset.i].include = cb.checked; });
+    });
+    const need = pendingRows.filter(r => r.include && !r.category).length;
+    reviewCount.textContent = pendingRows.length + ' found' + (need ? ' \u00b7 ' + need + ' need a category' : ' \u00b7 all set');
+    reviewArea.style.display = 'block';
+  }
+
+  document.getElementById('importBtn').addEventListener('click', () => {
+    const chosen = pendingRows.filter(r => r.include);
+    if (chosen.length === 0) { alert('No rows are checked to add.'); return; }
+    const missing = chosen.filter(r => !r.category);
+    if (missing.length) { alert(missing.length + ' checked row(s) still need a category. Pick one for each, or uncheck them.'); return; }
+    const exp = getExpenses();
+    let base = Date.now();
+    chosen.forEach((r, k) => {
+      learnRule(r.desc, r.category);
+      exp.push({ id: base + k, date: r.date, category: r.category, amount: r.amount, note: r.desc });
+    });
+    setExpenses(exp);
+    pendingRows = [];
+    reviewArea.style.display = 'none';
+    if (chosen[0]) budgetMonthEl.value = chosen[0].date.slice(0, 7);
+    renderBudget();
+    alert('Added ' + chosen.length + ' expense(s) from your statement.');
+  });
+
+  document.getElementById('cancelImportBtn').addEventListener('click', () => {
+    pendingRows = [];
+    reviewArea.style.display = 'none';
+  });
+
+  // ================= EXCEL / CSV EXPORT =================
+  function buildExportData(month) {
+    const days = getHistory().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? -1 : 1);
+    const exp = getExpenses().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? -1 : 1);
+    const gross = days.reduce((s, e) => s + e.earnings, 0);
+    const taxPct = taxOn() ? taxRate() : 0;
+    const net = gross * (1 - taxPct / 100);
+    const totalExp = exp.reduce((s, e) => s + e.amount, 0);
+    return { days, exp, gross, taxPct, net, totalExp, leftover: net - totalExp };
+  }
+
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    if (typeof XLSX === 'undefined') {
+      alert('The Excel helper could not load (you may be offline). Use "Download CSV instead" \u2014 it opens in Excel too.');
+      return;
+    }
+    const month = currentBudgetMonth();
+    const d = buildExportData(month);
+    const mn = monthName(month);
+    const wb = XLSX.utils.book_new();
+
+    const summaryRows = [
+      ['Monthly Report', mn],
+      [],
+      ['Hours worked', d.days.reduce((s, e) => s + e.hours, 0)],
+      ['Gross earnings', d.gross],
+      ['Tax rate (%)', d.taxPct],
+      ['Take-home pay', d.net],
+      ['Total expenses', d.totalExp],
+      ['Left over', d.leftover],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    wsSummary['!cols'] = [{ wch: 22 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    const hoursRows = [['Date', 'Shift', 'Break', 'Hours', 'Earnings']];
+    d.days.forEach(e => hoursRows.push([e.date, e.label, e.breakLabel || '', e.hours, e.earnings]));
+    hoursRows.push([]);
+    hoursRows.push(['', '', 'TOTAL', d.days.reduce((s, e) => s + e.hours, 0), d.gross]);
+    const wsHours = XLSX.utils.aoa_to_sheet(hoursRows);
+    wsHours['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 8 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsHours, 'Hours');
+
+    const expRows = [['Date', 'Category', 'Note', 'Amount']];
+    d.exp.forEach(e => expRows.push([e.date, e.category, e.note || '', e.amount]));
+    expRows.push([]);
+    expRows.push(['', '', 'TOTAL', d.totalExp]);
+    const wsExp = XLSX.utils.aoa_to_sheet(expRows);
+    wsExp['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsExp, 'Expenses');
+
+    XLSX.writeFile(wb, 'Money-Report-' + month + '.xlsx');
+  });
+
+  document.getElementById('exportCsvBtn').addEventListener('click', () => {
+    const month = currentBudgetMonth();
+    const d = buildExportData(month);
+    const mn = monthName(month);
+    const esc = v => '"' + String(v).replace(/"/g, '""') + '"';
+    let lines = [];
+    lines.push([esc('Monthly Report'), esc(mn)].join(','));
+    lines.push('');
+    lines.push([esc('Hours worked'), d.days.reduce((s, e) => s + e.hours, 0)].join(','));
+    lines.push([esc('Gross earnings'), d.gross.toFixed(2)].join(','));
+    lines.push([esc('Tax rate (%)'), d.taxPct].join(','));
+    lines.push([esc('Take-home pay'), d.net.toFixed(2)].join(','));
+    lines.push([esc('Total expenses'), d.totalExp.toFixed(2)].join(','));
+    lines.push([esc('Left over'), d.leftover.toFixed(2)].join(','));
+    lines.push('');
+    lines.push('HOURS');
+    lines.push(['Date', 'Shift', 'Break', 'Hours', 'Earnings'].map(esc).join(','));
+    d.days.forEach(e => lines.push([e.date, e.label, e.breakLabel || '', e.hours, e.earnings.toFixed(2)].map(esc).join(',')));
+    lines.push('');
+    lines.push('EXPENSES');
+    lines.push(['Date', 'Category', 'Note', 'Amount'].map(esc).join(','));
+    d.exp.forEach(e => lines.push([e.date, e.category, e.note || '', e.amount.toFixed(2)].map(esc).join(',')));
+
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Money-Report-' + month + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  window.addEventListener('load', () => {
+    if (typeof XLSX === 'undefined') {
+      document.getElementById('exportNote').textContent =
+        'Excel helper is offline right now \u2014 use "Download CSV instead", which also opens in Excel.';
+    }
+  });
+
+  // ================= MANUAL BACKUP & RESTORE =================
+  function collectStore() {
+    const store = {};
+    ALL_KEYS.forEach(k => { store[k] = localStorage.getItem(k); });
+    return store;
+  }
+  function applyStore(store) {
+    ALL_KEYS.forEach(k => {
+      const v = store[k];
+      if (v === null || v === undefined) localStorage.removeItem(k);
+      else localStorage.setItem(k, v);
+    });
+  }
+
+  document.getElementById('backupBtn').addEventListener('click', () => {
+    const data = { app: 'HoursMoneyTracker', version: 1, savedAt: new Date().toISOString(), store: collectStore() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.download = 'TIMESHEET-backup-' + stamp + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  const restoreFileEl = document.getElementById('restoreFile');
+  document.getElementById('restoreBtn').addEventListener('click', () => restoreFileEl.click());
+
+  restoreFileEl.addEventListener('change', () => {
+    const file = restoreFileEl.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || data.app !== 'HoursMoneyTracker' || !data.store) {
+          alert('That does not look like a TIMESHEET backup file.');
+          return;
+        }
+        const when = data.savedAt ? new Date(data.savedAt).toLocaleString() : 'unknown time';
+        if (!confirm('Load this backup (saved ' + when + ')? It will REPLACE the data currently on this computer.')) return;
+        applyStore(data.store);
+        touchData();
+        alert('Backup loaded! Your hours, expenses, categories and settings are restored.');
+        location.reload();
+      } catch (e) {
+        alert('Sorry, I could not read that backup file.');
+      }
+      restoreFileEl.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  // ================= ENCRYPTED CLOUD SYNC (GitHub Gist) =================
+  // Data model in the gist: a JSON file "timesheet-data.json" whose content is
+  // { app, version, savedAt, cipher: {salt, iv, ct} } — an AES-GCM blob of the
+  // store bundle, derived from the passphrase via PBKDF2. The gist never holds
+  // plaintext; the passphrase never leaves this device.
+
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  const GIST_FILENAME = 'timesheet-data.json';
+
+  let sessionPass = null; // held only in memory for this tab
+
+  function b64(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+  function unb64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); }
+
+  async function deriveKey(passphrase, salt) {
+    const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+      baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+    );
+  }
+
+  async function encryptBundle(passphrase, obj) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(passphrase, salt);
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+    return { salt: b64(salt), iv: b64(iv), ct: b64(ct) };
+  }
+
+  async function decryptBundle(passphrase, cipher) {
+    const salt = unb64(cipher.salt), iv = unb64(cipher.iv), ct = unb64(cipher.ct);
+    const key = await deriveKey(passphrase, salt);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return JSON.parse(dec.decode(pt));
+  }
+
+  function syncConfigured() {
+    return !!(localStorage.getItem(SYNC_TOKEN_KEY) && localStorage.getItem(SYNC_GIST_KEY));
+  }
+  function autoSyncOn() { return localStorage.getItem(SYNC_AUTO_KEY) !== 'false'; }
+
+  async function gistGet() {
+    const token = localStorage.getItem(SYNC_TOKEN_KEY);
+    const gistId = localStorage.getItem(SYNC_GIST_KEY);
+    const res = await fetch('https://api.github.com/gists/' + gistId, {
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' }
+    });
+    if (!res.ok) throw new Error('GitHub said ' + res.status + '. Check your token and Gist ID.');
+    const json = await res.json();
+    const file = json.files && json.files[GIST_FILENAME];
+    if (!file) return null;
+    let content = file.content;
+    if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
+    return content;
+  }
+
+  async function gistPut(contentStr) {
+    const token = localStorage.getItem(SYNC_TOKEN_KEY);
+    const gistId = localStorage.getItem(SYNC_GIST_KEY);
+    const body = { files: {} };
+    body.files[GIST_FILENAME] = { content: contentStr };
+    const res = await fetch('https://api.github.com/gists/' + gistId, {
+      method: 'PATCH',
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('GitHub said ' + res.status + ' while saving. Check the token has Gist read+write.');
+  }
+
+  function setSyncState(state, msg) {
+    const dot = document.getElementById('syncDot');
+    const status = document.getElementById('syncStatus');
+    if (!dot) return;
+    dot.className = 'sync-dot ' + state;
+    if (msg) status.innerHTML = msg;
+  }
+
+  // Push local data to the cloud (encrypted).
+  async function pushToCloud(opts) {
+    opts = opts || {};
+    if (!syncConfigured()) return;
+    if (!sessionPass) { if (!opts.silent) toast('Unlock with your passphrase first.'); return; }
+    try {
+      setSyncState('syncing', 'Syncing&hellip;');
+      const stamp = localStorage.getItem(DATA_STAMP_KEY) || new Date().toISOString();
+      const bundle = { store: collectStore(), stamp };
+      const cipher = await encryptBundle(sessionPass, bundle);
+      const payload = JSON.stringify({ app: 'HoursMoneyTracker', version: 1, savedAt: new Date().toISOString(), stamp, cipher }, null, 2);
+      await gistPut(payload);
+      localStorage.setItem(SYNC_LASTPULL_KEY, stamp);
+      setSyncState('ok', 'Synced &mdash; <b>' + new Date().toLocaleString() + '</b>');
+      if (!opts.silent) toast('Synced to cloud.');
+    } catch (e) {
+      setSyncState('err', 'Sync error: ' + e.message);
+      if (!opts.silent) toast('Sync failed: ' + e.message);
+    }
+  }
+
+  // Pull cloud data down and apply it (decrypted). Returns true if applied.
+  async function pullFromCloud(opts) {
+    opts = opts || {};
+    if (!syncConfigured()) return false;
+    if (!sessionPass) { if (!opts.silent) promptUnlock(); return false; }
+    try {
+      setSyncState('syncing', 'Checking cloud&hellip;');
+      const content = await gistGet();
+      if (!content || content.trim() === '' || content.trim() === '{}') {
+        setSyncState('ok', 'Cloud is empty &mdash; nothing to pull yet.');
+        return false;
+      }
+      const parsed = JSON.parse(content);
+      if (!parsed.cipher) { setSyncState('err', 'Cloud file is not in the expected format.'); return false; }
+      let bundle;
+      try { bundle = await decryptBundle(sessionPass, parsed.cipher); }
+      catch (e) { setSyncState('err', 'Wrong passphrase for the cloud data.'); toast('That passphrase does not match the cloud data.'); return false; }
+
+      const cloudStamp = bundle.stamp || parsed.stamp || parsed.savedAt || '';
+      const localStamp = localStorage.getItem(DATA_STAMP_KEY) || '';
+
+      if (opts.force || !localStamp || cloudStamp > localStamp) {
+        applyStore(bundle.store);
+        localStorage.setItem(DATA_STAMP_KEY, cloudStamp);
+        localStorage.setItem(SYNC_LASTPULL_KEY, cloudStamp);
+        setSyncState('ok', 'Pulled from cloud &mdash; <b>' + new Date(cloudStamp).toLocaleString() + '</b>');
+        if (opts.reload) { toast('Loaded your cloud data.'); setTimeout(() => location.reload(), 500); }
+        else refreshAllViews();
+        return true;
+      } else if (cloudStamp < localStamp) {
+        setSyncState('ok', 'This device is newer than the cloud. Use <b>Sync now</b> to upload.');
+        return false;
+      } else {
+        setSyncState('ok', 'Already up to date &mdash; <b>' + new Date(cloudStamp).toLocaleString() + '</b>');
+        return false;
+      }
+    } catch (e) {
+      setSyncState('err', 'Pull error: ' + e.message);
+      if (!opts.silent) toast('Could not read cloud: ' + e.message);
+      return false;
+    }
+  }
+
+  // Debounced auto-sync after edits.
+  let autoTimer = null;
+  function scheduleAutoSync() {
+    if (!syncConfigured() || !autoSyncOn() || !sessionPass) return;
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(() => pushToCloud({ silent: true }), 1500);
+  }
+
+  function refreshAllViews() {
+    // Re-read UI inputs from restored storage.
+    const r = localStorage.getItem(RATE_KEY); if (r !== null) { rateEl.value = r; }
+    taxToggleEl.checked = localStorage.getItem(TAX_ON_KEY) === 'true';
+    budgetTaxToggle.checked = taxToggleEl.checked;
+    const tr = localStorage.getItem(TAX_RATE_KEY); if (tr !== null) { taxRateEl.value = tr; budgetTaxRate.value = tr; }
+    renderCategories();
+    updateDayTotals();
+    renderHistory();
+    renderBudget();
+    if (summaryBox.style.display === 'block') showSummary();
+    if (document.getElementById('flowPage').classList.contains('active')) renderFlow();
+  }
+
+  // ---- Sync UI wiring ----
+  const ghTokenEl = document.getElementById('ghToken');
+  const ghGistEl = document.getElementById('ghGist');
+  const passSetEl = document.getElementById('passSet');
+  const passSet2El = document.getElementById('passSet2');
+  const autoSyncChk = document.getElementById('autoSyncChk');
+  const autoSyncChk2 = document.getElementById('autoSyncChk2');
+
+  function renderSyncUI() {
+    const configured = syncConfigured();
+    document.getElementById('setupCard').style.display = configured ? 'none' : 'block';
+    document.getElementById('connectedCard').style.display = configured ? 'block' : 'none';
+    document.getElementById('lockNote').style.display = configured ? 'block' : 'none';
+    document.getElementById('syncNowBtn').style.display = configured ? 'inline-block' : 'none';
+    document.getElementById('pullBtn').style.display = configured ? 'inline-block' : 'none';
+    autoSyncChk2.checked = autoSyncOn();
+
+    if (!configured) {
+      setSyncState('off', 'Cloud sync is not set up yet. Fill in the form below to connect this device.');
+    } else if (!sessionPass) {
+      setSyncState('off', 'Connected, but locked. Click <b>Pull from cloud</b> or <b>Sync now</b> and enter your passphrase.');
+    } else {
+      const last = localStorage.getItem(SYNC_LASTPULL_KEY);
+      setSyncState('ok', last ? 'Connected. Last synced <b>' + new Date(last).toLocaleString() + '</b>.' : 'Connected. Not synced yet this session.');
+    }
+  }
+
+  document.getElementById('connectBtn').addEventListener('click', async () => {
+    const token = (ghTokenEl.value || '').trim();
+    const gist = (ghGistEl.value || '').trim();
+    const p1 = passSetEl.value, p2 = passSet2El.value;
+    if (!token || !gist) { alert('Paste both your GitHub token and Gist ID.'); return; }
+    if (!p1) { alert('Choose a passphrase.'); return; }
+    if (p1 !== p2) { alert('The two passphrases do not match.'); return; }
+
+    localStorage.setItem(SYNC_TOKEN_KEY, token);
+    localStorage.setItem(SYNC_GIST_KEY, gist);
+    localStorage.setItem(SYNC_AUTO_KEY, autoSyncChk.checked ? 'true' : 'false');
+    sessionPass = p1;
+
+    // First connect: does the cloud already have data (another device set it up)?
+    setSyncState('syncing', 'Connecting&hellip;');
+    let content = null;
+    try { content = await gistGet(); }
+    catch (e) { setSyncState('err', e.message); alert('Could not reach the Gist: ' + e.message + '\n\nDouble-check the token has Gist read+write and the Gist ID is right.'); return; }
+
+    const hasCloud = content && content.trim() !== '' && content.trim() !== '{}' && JSON.parse(content).cipher;
+    const hasLocal = getHistory().length > 0 || getExpenses().length > 0;
+
+    passSetEl.value = ''; passSet2El.value = ''; ghTokenEl.value = ''; ghGistEl.value = '';
+
+    if (hasCloud && hasLocal) {
+      // Both exist — let the user choose which wins.
+      if (confirm('This device already has data, and the cloud also has data.\n\nOK = download the CLOUD copy (replaces this device).\nCancel = upload THIS device (replaces the cloud).')) {
+        await pullFromCloud({ force: true, reload: true });
+      } else {
+        await pushToCloud({});
+        renderSyncUI();
+      }
+    } else if (hasCloud) {
+      await pullFromCloud({ force: true, reload: true });
+    } else {
+      // Nothing in cloud yet — seed it from this device.
+      if (!localStorage.getItem(DATA_STAMP_KEY)) localStorage.setItem(DATA_STAMP_KEY, new Date().toISOString());
+      await pushToCloud({});
+      renderSyncUI();
+      toast('Connected. This device is now the source of truth in the cloud.');
+    }
+  });
+
+  document.getElementById('syncNowBtn').addEventListener('click', async () => {
+    if (!sessionPass) { promptUnlock(async () => { await pullFromCloud({ silent: true }); await pushToCloud({}); }); return; }
+    // Pull first (pick up other devices), then push our state.
+    await pullFromCloud({ silent: true });
+    await pushToCloud({});
+  });
+
+  document.getElementById('pullBtn').addEventListener('click', () => {
+    if (!sessionPass) { promptUnlock(() => pullFromCloud({ reload: true })); return; }
+    pullFromCloud({ reload: true });
+  });
+
+  document.getElementById('forgetBtn').addEventListener('click', () => {
+    if (!confirm('Disconnect this device? Your token and passphrase are removed from THIS browser only. Local data stays, and the cloud copy is untouched.')) return;
+    localStorage.removeItem(SYNC_TOKEN_KEY);
+    localStorage.removeItem(SYNC_GIST_KEY);
+    sessionPass = null;
+    renderSyncUI();
+    toast('Disconnected this device.');
+  });
+
+  document.getElementById('changePassBtn').addEventListener('click', async () => {
+    if (!sessionPass) { promptUnlock(() => document.getElementById('changePassBtn').click()); return; }
+    const np = prompt('New passphrase (you must use this on every device from now on):');
+    if (!np) return;
+    const np2 = prompt('Type the new passphrase again to confirm:');
+    if (np !== np2) { alert('They did not match. Passphrase unchanged.'); return; }
+    sessionPass = np;
+    await pushToCloud({});
+    toast('Passphrase changed and re-encrypted in the cloud. Update your other devices.');
+  });
+
+  autoSyncChk2.addEventListener('change', () => {
+    localStorage.setItem(SYNC_AUTO_KEY, autoSyncChk2.checked ? 'true' : 'false');
+  });
+
+  // ---- Passphrase unlock overlay ----
+  function promptUnlock(after) {
+    const overlay = document.createElement('div');
+    overlay.className = 'unlock-overlay';
+    overlay.innerHTML =
+      '<div class="unlock-box">' +
+      '<h2>Unlock your data</h2>' +
+      '<p class="subtitle">Enter the passphrase you set up. It stays on this device and decrypts your cloud data.</p>' +
+      '<input type="password" id="unlockPass" placeholder="passphrase" autocomplete="current-password" />' +
+      '<div class="row" style="margin-top:8px;">' +
+      '<button class="primary" id="unlockGo">Unlock</button>' +
+      '<button class="ghost" id="unlockCancel">Cancel</button>' +
+      '</div></div>';
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#unlockPass');
+    input.focus();
+    const done = () => overlay.remove();
+    overlay.querySelector('#unlockCancel').addEventListener('click', done);
+    const go = () => {
+      const v = input.value;
+      if (!v) return;
+      sessionPass = v;
+      done();
+      renderSyncUI();
+      if (typeof after === 'function') after();
+    };
+    overlay.querySelector('#unlockGo').addEventListener('click', go);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  }
+
+  // On load: if configured, offer to pull the latest automatically.
+  async function autoPullOnLoad() {
+    if (!syncConfigured()) return;
+    // Ask for the passphrase, then pull silently and reload only if newer.
+    setSyncState('off', 'Connected. Unlock to sync.');
+  }
+
+  // ================= INIT =================
+  flowMonthEl.value = thisMonth;
+  renderCategories();
+  renderBlocks();
+  updateDayTotals();
+  renderHistory();
+  renderSyncUI();
+  autoPullOnLoad();
+</script>
+</body>
+</html>
