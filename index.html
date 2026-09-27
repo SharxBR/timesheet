@@ -99,6 +99,8 @@
   .ghost:hover { background: #f9fafb; }
   .green { background: #16a34a; color: #fff; }
   .green:hover { background: #15803d; }
+  .flow-view-btn { border: none; padding: 6px 14px; cursor: pointer; font-weight: 600; background: #fff; color: #4338ca; border-radius: 0; }
+  .flow-view-btn.active { background: #6366f1; color: #fff; }
   .danger { background: #ef4444; color: #fff; }
   .danger:hover { background: #dc2626; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
@@ -477,8 +479,16 @@
           Year to date
         </label>
       </div>
+      <div class="row" style="margin-top:4px;">
+        <span style="font-weight:600;">View:</span>
+        <div id="flowViewToggle" style="display:inline-flex;border:1px solid #c7d2fe;border-radius:8px;overflow:hidden;">
+          <button type="button" class="flow-view-btn active" data-view="flow">Flow diagram</button>
+          <button type="button" class="flow-view-btn" data-view="pie">Spending pie</button>
+        </div>
+      </div>
       <p class="subtitle" id="flowNote">See your income flow into taxes, expenses, and savings.</p>
       <div id="sankeyChart" style="width:100%;height:600px;"></div>
+      <div id="pieChart" style="width:100%;height:600px;display:none;"></div>
     </div>
 
     <!-- ============ SYNC & DEVICES PAGE ============ -->
@@ -1041,6 +1051,9 @@
   const budgetPeriodLblEl = document.getElementById('budgetPeriodLbl');
   const dashYtdEl = document.getElementById('dashYtd');
   const dashPeriodLblEl = document.getElementById('dashPeriodLbl');
+  const pieEl = document.getElementById('pieChart');
+  const flowViewToggle = document.getElementById('flowViewToggle');
+  let flowView = 'flow'; // 'flow' (Sankey) or 'pie'
 
   function yearOf(month) { return (month || thisMonth).slice(0, 4); }
   function budgetPeriod() {
@@ -1349,7 +1362,7 @@
     renderBudget();
   });
 
-  // ================= MONEY-FLOW SANKEY =================
+  // ================= MONEY-FLOW (SANKEY + PIE) =================
   function renderFlow() {
     const month = flowPeriod();
     const gross = monthGross(month);
@@ -1364,7 +1377,17 @@
     getIncome().filter(e => e.date.startsWith(month)).forEach(e => { byIncome[e.category] = (byIncome[e.category] || 0) + e.amount; });
     const otherIncome = Object.values(byIncome).reduce((s, v) => s + v, 0);
     const totalNet = workNet + otherIncome;
-    drawSankey(month, gross, taxPct, byCat, Math.max(0, totalNet - totalExp), byIncome);
+    const savings = Math.max(0, totalNet - totalExp);
+
+    // Show the container matching the active view; hide the other.
+    sankeyEl.style.display = (flowView === 'flow') ? 'block' : 'none';
+    pieEl.style.display = (flowView === 'pie') ? 'block' : 'none';
+
+    if (flowView === 'pie') {
+      drawPie(month, totalNet, byCat, savings);
+    } else {
+      drawSankey(month, gross, taxPct, byCat, savings, byIncome);
+    }
   }
   flowMonthEl.addEventListener('change', renderFlow);
   flowYtdEl.addEventListener('change', () => {
@@ -1372,10 +1395,19 @@
     flowMonthEl.style.opacity = flowYtdEl.checked ? '0.5' : '1';
     renderFlow();
   });
+  if (flowViewToggle) {
+    flowViewToggle.addEventListener('click', e => {
+      const btn = e.target.closest('.flow-view-btn');
+      if (!btn) return;
+      flowView = btn.dataset.view;
+      flowViewToggle.querySelectorAll('.flow-view-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderFlow();
+    });
+  }
   let googleReady = false;
   let pendingDraw = null;
   if (typeof google !== 'undefined' && google.charts) {
-    google.charts.load('current', { packages: ['sankey'] });
+    google.charts.load('current', { packages: ['sankey', 'corechart'] });
     google.charts.setOnLoadCallback(() => {
       googleReady = true;
       if (pendingDraw) { pendingDraw(); pendingDraw = null; }
@@ -1399,20 +1431,27 @@
 
     const render = () => {
       const rows = [];
-      const taxAmt = gross * (taxPct / 100);
-      const workNet = gross - taxAmt;
+      const cents = v => Math.round((Number(v) || 0) * 100) / 100;
+      const taxAmt = cents(gross * (taxPct / 100));
+      const workNet = cents(gross - taxAmt);
+
+      // Track which nodes are income sources so we can color them green.
+      const incomeNodes = new Set();
 
       // Each income source flows into the shared "Take-home" pool.
       // Work income pays taxes first (out of gross), then its net joins the pool.
       if (taxAmt > 0) rows.push(['Work income', 'Taxes', taxAmt]);
       if (workNet > 0) rows.push(['Work income', 'Take-home', workNet]);
+      if (taxAmt > 0 || workNet > 0) incomeNodes.add('Work income');
       Object.keys(byIncome).forEach(src => {
-        if (byIncome[src] > 0) rows.push([src, 'Take-home', byIncome[src]]);
+        const amt = cents(byIncome[src]);
+        if (amt > 0) { rows.push([src, 'Take-home', amt]); incomeNodes.add(src); }
       });
 
       // Take-home splits into expense categories and savings.
-      Object.keys(byCat).forEach(c => { if (byCat[c] > 0) rows.push(['Take-home', c, byCat[c]]); });
-      if (savings > 0) rows.push(['Take-home', 'Savings / Left over', savings]);
+      Object.keys(byCat).forEach(c => { const amt = cents(byCat[c]); if (amt > 0) rows.push(['Take-home', c, amt]); });
+      const savingsC = cents(savings);
+      if (savingsC > 0) rows.push(['Take-home', 'Savings / Left over', savingsC]);
 
       if (rows.length === 0) {
         sankeyEl.innerHTML = '<div class="empty">Add expenses to see where your money flows.</div>';
@@ -1425,6 +1464,29 @@
       data.addColumn('number', 'Amount');
       data.addRows(rows);
 
+      // Google Sankey assigns node.colors in the order nodes first appear
+      // across the rows. Build a color per node in that exact order so income
+      // sources (and Take-home / Savings) are always green, taxes red, and
+      // expense categories cycle through a varied palette.
+      const greenIncome = '#16a34a';   // income sources
+      const greenPool = '#22c55e';     // take-home pool
+      const greenSavings = '#15803d';  // savings / left over
+      const redTax = '#ef4444';        // taxes
+      const expensePalette = ['#6366f1', '#f59e0b', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6', '#f97316', '#64748b'];
+      const nodeOrder = [];
+      const seen = new Set();
+      rows.forEach(r => {
+        [r[0], r[1]].forEach(n => { if (!seen.has(n)) { seen.add(n); nodeOrder.push(n); } });
+      });
+      let expIdx = 0;
+      const nodeColors = nodeOrder.map(n => {
+        if (incomeNodes.has(n)) return greenIncome;
+        if (n === 'Take-home') return greenPool;
+        if (n === 'Savings / Left over') return greenSavings;
+        if (n === 'Taxes') return redTax;
+        return expensePalette[expIdx++ % expensePalette.length];
+      });
+
       const options = {
         height: 400,
         sankey: {
@@ -1432,7 +1494,7 @@
             width: 14,
             nodePadding: 26,
             label: { fontName: 'Segoe UI', fontSize: 14, color: '#1f2933', bold: true },
-            colors: ['#6366f1', '#ef4444', '#22c55e', '#f59e0b', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6', '#64748b']
+            colors: nodeColors
           },
           link: { colorMode: 'gradient', color: { fillOpacity: 0.5 } }
         }
@@ -1440,6 +1502,65 @@
       const chart = new google.visualization.Sankey(sankeyEl);
       chart.draw(data, options);
       flowNote.textContent = 'Income for ' + periodLabel(month) + ' flowing into taxes, spending, and savings. Thicker ribbons = more money.';
+    };
+
+    if (googleReady) render();
+    else pendingDraw = render;
+  }
+
+  function drawPie(month, totalIncome, byCat, savings) {
+    const cents = v => Math.round((Number(v) || 0) * 100) / 100;
+    totalIncome = cents(totalIncome);
+
+    if (totalIncome <= 0) {
+      pieEl.innerHTML = '<div class="empty">Log work hours or add other income to see your spending breakdown.</div>';
+      flowNote.textContent = 'The whole pie is your income; each slice is where it goes.';
+      return;
+    }
+    if (typeof google === 'undefined' || !google.charts) {
+      pieEl.innerHTML = '<div class="empty">The chart needs an internet connection. Everything else still works offline.</div>';
+      flowNote.textContent = 'Connect to the internet to see the spending pie.';
+      return;
+    }
+
+    const render = () => {
+      // Whole pie = income. Slices = each expense category, plus the unspent
+      // remainder as "Savings / Left over" so the slices sum to income.
+      const slices = [];
+      const colors = [];
+      const expensePalette = ['#6366f1', '#f59e0b', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6', '#f97316', '#ef4444', '#64748b'];
+      let ci = 0;
+      Object.keys(byCat).forEach(c => {
+        const amt = cents(byCat[c]);
+        if (amt > 0) { slices.push([c, amt]); colors.push(expensePalette[ci++ % expensePalette.length]); }
+      });
+      const savingsC = cents(savings);
+      if (savingsC > 0) { slices.push(['Savings / Left over', savingsC]); colors.push('#16a34a'); }
+
+      if (slices.length === 0) {
+        pieEl.innerHTML = '<div class="empty">Add expenses to see where your money goes.</div>';
+        flowNote.textContent = 'The whole pie is your income; each slice is where it goes.';
+        return;
+      }
+
+      const data = new google.visualization.DataTable();
+      data.addColumn('string', 'Where it goes');
+      data.addColumn('number', 'Amount');
+      data.addRows(slices);
+
+      const options = {
+        height: 480,
+        pieHole: 0,
+        colors: colors,
+        legend: { position: 'right', textStyle: { fontName: 'Segoe UI', fontSize: 13 } },
+        chartArea: { width: '90%', height: '85%' },
+        tooltip: { text: 'both' },
+        pieSliceText: 'percentage',
+        fontName: 'Segoe UI'
+      };
+      const chart = new google.visualization.PieChart(pieEl);
+      chart.draw(data, options);
+      flowNote.textContent = 'Whole pie = your ' + periodLabel(month) + ' income ($' + totalIncome.toFixed(2) + '). Each slice is where it went; the green slice is what you kept.';
     };
 
     if (googleReady) render();
