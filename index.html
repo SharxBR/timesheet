@@ -104,6 +104,9 @@
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
   th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eef0f4; }
   th { color: #6b7280; font-weight: 600; }
+  th.sort-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sort-th:hover { color: #111827; }
+  th.sort-th .sort-arrow { font-size: 10px; opacity: 0.7; margin-left: 2px; }
   .empty { color: #9ca3af; font-size: 14px; padding: 12px 0; }
   .summary-box {
     background: #f0fdf4;
@@ -373,7 +376,13 @@
       </div>
 
       <table id="incTable">
-        <thead><tr><th>Date</th><th>Income type</th><th>Note</th><th>Amount</th><th></th></tr></thead>
+        <thead><tr>
+          <th class="sort-th" data-isort="date">Date</th>
+          <th class="sort-th" data-isort="category">Income type</th>
+          <th class="sort-th" data-isort="note">Note</th>
+          <th class="sort-th" data-isort="amount">Amount</th>
+          <th></th>
+        </tr></thead>
         <tbody id="incBody"></tbody>
       </table>
       <div class="empty" id="incEmpty">No other income added for this month yet.</div>
@@ -418,7 +427,13 @@
 
       <h2>Expenses this month</h2>
       <table id="expTable">
-        <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Amount</th><th></th></tr></thead>
+        <thead><tr>
+          <th class="sort-th" data-sort="date">Date</th>
+          <th class="sort-th" data-sort="category">Category</th>
+          <th class="sort-th" data-sort="note">Note</th>
+          <th class="sort-th" data-sort="amount">Amount</th>
+          <th></th>
+        </tr></thead>
         <tbody id="expBody"></tbody>
       </table>
       <div class="empty" id="expEmpty">No expenses added for this month yet.</div>
@@ -1103,7 +1118,8 @@
     const workIncome = gross * (1 - taxPct / 100);
     const otherIncome = monthManualIncome(month);
     const income = workIncome + otherIncome;
-    const exp = getExpenses().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? 1 : -1);
+    const exp = getExpenses().filter(e => e.date.startsWith(month));
+    sortEntries(exp, expSort);
     const totalExp = exp.reduce((s, e) => s + e.amount, 0);
 
     cIncome.textContent = '$' + income.toFixed(2);
@@ -1150,6 +1166,7 @@
     }
 
     expBody.innerHTML = '';
+    paintSortArrows(expHead, 'data-sort', expSort);
     if (exp.length === 0) { expEmpty.style.display = 'block'; }
     else {
       expEmpty.style.display = 'none';
@@ -1185,6 +1202,58 @@
   const incomeBreakdownEl = document.getElementById('incomeBreakdown');
 
   incDateEl.value = todayISO;
+
+  // ---- Sortable expense/income lists ----
+  // Default: newest date first (matches prior behavior).
+  let expSort = { key: 'date', dir: 'desc' };
+  let incSort = { key: 'date', dir: 'desc' };
+
+  function sortEntries(list, state) {
+    const { key, dir } = state;
+    const mul = dir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      let av, bv;
+      if (key === 'amount') { av = a.amount; bv = b.amount; }
+      else if (key === 'date') { av = a.date; bv = b.date; }
+      else { av = ((key === 'category' ? a.category : a.note) || '').toLowerCase(); bv = ((key === 'category' ? b.category : b.note) || '').toLowerCase(); }
+      if (av < bv) return -1 * mul;
+      if (av > bv) return 1 * mul;
+      // Tie-breaker so order is stable/predictable: fall back to date desc.
+      return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0);
+    });
+    return list;
+  }
+
+  function paintSortArrows(container, attr, state) {
+    container.querySelectorAll('th[' + attr + ']').forEach(th => {
+      const k = th.getAttribute(attr);
+      const base = th.textContent.replace(/\s*[\u25B2\u25BC]$/, '').trimEnd();
+      if (k === state.key) {
+        th.innerHTML = base + ' <span class="sort-arrow">' + (state.dir === 'asc' ? '\u25B2' : '\u25BC') + '</span>';
+      } else {
+        th.innerHTML = base;
+      }
+    });
+  }
+
+  const expHead = document.querySelector('#expTable thead');
+  const incHead = document.querySelector('#incTable thead');
+  expHead.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.getAttribute('data-sort');
+      if (expSort.key === k) expSort.dir = expSort.dir === 'asc' ? 'desc' : 'asc';
+      else { expSort.key = k; expSort.dir = (k === 'amount' || k === 'date') ? 'desc' : 'asc'; }
+      renderBudget();
+    });
+  });
+  incHead.querySelectorAll('th[data-isort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.getAttribute('data-isort');
+      if (incSort.key === k) incSort.dir = incSort.dir === 'asc' ? 'desc' : 'asc';
+      else { incSort.key = k; incSort.dir = (k === 'amount' || k === 'date') ? 'desc' : 'asc'; }
+      renderIncome();
+    });
+  });
 
   function renderIncomeCategories() {
     const cats = getIncomeCategories();
@@ -1228,8 +1297,10 @@
 
   function renderIncome() {
     const month = budgetPeriod();
-    const inc = getIncome().filter(e => e.date.startsWith(month)).sort((a, b) => a.date < b.date ? 1 : -1);
+    const inc = getIncome().filter(e => e.date.startsWith(month));
+    sortEntries(inc, incSort);
     incBody.innerHTML = '';
+    paintSortArrows(incHead, 'data-isort', incSort);
     if (inc.length === 0) { incEmpty.style.display = 'block'; }
     else {
       incEmpty.style.display = 'none';
