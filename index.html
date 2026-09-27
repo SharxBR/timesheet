@@ -1438,20 +1438,25 @@
       // Track which nodes are income sources so we can color them green.
       const incomeNodes = new Set();
 
-      // Each income source flows into the shared "Take-home" pool.
-      // Work income pays taxes first (out of gross), then its net joins the pool.
-      if (taxAmt > 0) rows.push(['Work income', 'Taxes', taxAmt]);
-      if (workNet > 0) rows.push(['Work income', 'Take-home', workNet]);
-      if (taxAmt > 0 || workNet > 0) incomeNodes.add('Work income');
+      // Each income source flows into the shared "Take-home" pool at its full
+      // amount. Taxes then come OUT of the pool as just another outflow,
+      // alongside the expense categories, rather than splitting off up front.
+      let takeHomeIn = 0;
+      if (gross > 0) { rows.push(['Work income', 'Take-home', cents(gross)]); takeHomeIn += cents(gross); incomeNodes.add('Work income'); }
       Object.keys(byIncome).forEach(src => {
         const amt = cents(byIncome[src]);
-        if (amt > 0) { rows.push([src, 'Take-home', amt]); incomeNodes.add(src); }
+        if (amt > 0) { rows.push([src, 'Take-home', amt]); incomeNodes.add(src); takeHomeIn += amt; }
       });
 
-      // Take-home splits into expense categories and savings.
-      Object.keys(byCat).forEach(c => { const amt = cents(byCat[c]); if (amt > 0) rows.push(['Take-home', c, amt]); });
-      const savingsC = cents(savings);
-      if (savingsC > 0) rows.push(['Take-home', 'Savings / Left over', savingsC]);
+      // Take-home splits into taxes, expense categories, and savings -- but only
+      // if some income actually reached it. With no income, skip the Take-home
+      // node so nothing dangles.
+      if (takeHomeIn > 0) {
+        if (taxAmt > 0) rows.push(['Take-home', 'Taxes', taxAmt]);
+        Object.keys(byCat).forEach(c => { const amt = cents(byCat[c]); if (amt > 0) rows.push(['Take-home', c, amt]); });
+        const savingsC = cents(savings);
+        if (savingsC > 0) rows.push(['Take-home', 'Savings / Left over', savingsC]);
+      }
 
       if (rows.length === 0) {
         sankeyEl.innerHTML = '<div class="empty">Add expenses to see where your money flows.</div>';
@@ -1532,10 +1537,10 @@
       let ci = 0;
       Object.keys(byCat).forEach(c => {
         const amt = cents(byCat[c]);
-        if (amt > 0) { slices.push([c, amt]); colors.push(expensePalette[ci++ % expensePalette.length]); }
+        if (amt > 0) { slices.push([c + ' — $' + amt.toFixed(2), amt]); colors.push(expensePalette[ci++ % expensePalette.length]); }
       });
       const savingsC = cents(savings);
-      if (savingsC > 0) { slices.push(['Savings / Left over', savingsC]); colors.push('#16a34a'); }
+      if (savingsC > 0) { slices.push(['Savings / Left over — $' + savingsC.toFixed(2), savingsC]); colors.push('#16a34a'); }
 
       if (slices.length === 0) {
         pieEl.innerHTML = '<div class="empty">Add expenses to see where your money goes.</div>';
